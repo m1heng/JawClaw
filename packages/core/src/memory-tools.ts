@@ -1,6 +1,17 @@
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve, relative } from "node:path";
 import type { ToolRegistry } from "./tool-executor.js";
+
+/** Ensure resolved path stays within root. Throws on traversal attempt. */
+function assertWithin(root: string, filePath: string): string {
+  const resolvedRoot = resolve(root);
+  const resolved = resolve(resolvedRoot, filePath);
+  const rel = relative(resolvedRoot, resolved);
+  if (!rel || rel.startsWith("..") || resolve(resolvedRoot, rel) !== resolved) {
+    throw new Error("Path traversal denied");
+  }
+  return resolved;
+}
 
 /**
  * Create memory tool handlers. Shared by both Mouth and Hand agents.
@@ -39,8 +50,8 @@ export function createMemoryTools(memoryRoot: string): ToolRegistry {
     memory_write: async (args) => {
       const name = args.name as string;
       const content = args.content as string;
-      const filePath = join(memoryRoot, name);
       try {
+        const filePath = assertWithin(memoryRoot, name);
         await mkdir(memoryRoot, { recursive: true });
         await writeFile(filePath, content, "utf-8");
         return `Memory written: ${filePath}`;
@@ -51,8 +62,8 @@ export function createMemoryTools(memoryRoot: string): ToolRegistry {
 
     memory_read: async (args) => {
       const name = args.name as string;
-      const filePath = join(memoryRoot, name);
       try {
+        const filePath = assertWithin(memoryRoot, name);
         return await readFile(filePath, "utf-8");
       } catch (err) {
         return errMsg("memory_read", err);
