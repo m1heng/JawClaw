@@ -6,10 +6,24 @@ export type LLMResponse = {
   toolCalls: ToolCall[];
 };
 
+// Message types that can be sent to the LLM
+export type LLMMessage =
+  | { role: "system" | "user"; content: string }
+  | {
+      role: "assistant";
+      content: string;
+      tool_calls?: Array<{
+        id: string;
+        type: "function";
+        function: { name: string; arguments: string };
+      }>;
+    }
+  | { role: "tool"; content: string; tool_call_id: string };
+
 export type LLMClient = {
   createCompletion(params: {
     model: string;
-    messages: Array<{ role: string; content: string; tool_call_id?: string; name?: string }>;
+    messages: LLMMessage[];
     tools?: ToolDefinition[];
   }): Promise<LLMResponse>;
 };

@@ -1,7 +1,7 @@
 import type { ChatSession } from "./chat-session.js";
 import type { MessageQueue } from "./message-queue.js";
 import type { AgentConfig } from "./types.js";
-import type { LLMClient } from "./llm.js";
+import type { LLMClient, LLMMessage } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import { executeTool } from "./tool-executor.js";
 
@@ -29,20 +29,38 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       await session.append(chatMsg);
     }
 
-    // Build messages for LLM
+    // Build messages for LLM, preserving tool_calls on assistant messages
     const history = await session.readAll();
-    const messages: Array<{ role: string; content: string; tool_call_id?: string; name?: string }> = [
+    const messages: LLMMessage[] = [
       { role: "system", content: config.systemPrompt },
-      ...history.map((m) => {
+      ...history.map((m): LLMMessage => {
         if (m.role === "tool") {
           return {
             role: "tool",
             content: m.content,
             tool_call_id: m.meta?.tool_call_id as string,
-            name: m.meta?.tool_name as string,
           };
         }
-        return { role: m.role, content: m.content };
+        if (m.role === "assistant" && m.meta?.tool_calls) {
+          const toolCalls = m.meta.tool_calls as Array<{
+            id: string;
+            name: string;
+            arguments: Record<string, unknown>;
+          }>;
+          return {
+            role: "assistant",
+            content: m.content,
+            tool_calls: toolCalls.map((tc) => ({
+              id: tc.id,
+              type: "function" as const,
+              function: {
+                name: tc.name,
+                arguments: JSON.stringify(tc.arguments),
+              },
+            })),
+          };
+        }
+        return { role: m.role as "user" | "system", content: m.content };
       }),
     ];
 
@@ -55,7 +73,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
 
     // Handle tool calls
     if (response.toolCalls.length > 0) {
-      // Append assistant message with tool calls marker
+      // Append assistant message with tool_calls metadata
       await session.append({
         ts: new Date().toISOString(),
         role: "assistant",

@@ -1,9 +1,10 @@
 import { exec } from "node:child_process";
-import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { join, dirname, basename } from "node:path";
 import { generateId } from "./id.js";
 import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
+import { createMemoryTools } from "./memory-tools.js";
 import { runReactLoop } from "./react-loop.js";
 import { HAND_TOOLS } from "./tools.js";
 import type { AgentConfig, TaskDispatch, TaskResult, HandServices } from "./types.js";
@@ -67,6 +68,8 @@ export class HandAgent {
       content: this.task.description,
     });
 
+    const memRoot = this.services.memoryRoot ?? ".jawclaw/memory";
+
     const tools: ToolRegistry = {
       // --- File Operations ---
 
@@ -123,10 +126,15 @@ export class HandAgent {
       list_files: async (args) => {
         const pattern = args.pattern as string;
         const searchPath = (args.path as string) ?? ".";
-        // Use find + grep for glob matching (portable, no extra deps)
-        const result = await runCommand(
-          `find ${shellEscape(searchPath)} -type f -name '${pattern.replace(/'/g, "'\\''")}'  2>/dev/null | head -200`,
-        );
+        // Use find for simple patterns, glob-style via shell for ** patterns
+        let cmd: string;
+        if (pattern.includes("**") || pattern.includes("/")) {
+          // Use shell globstar for path-based patterns
+          cmd = `bash -O globstar -c 'ls -1 ${shellEscape(searchPath)}/${pattern} 2>/dev/null' | head -200`;
+        } else {
+          cmd = `find ${shellEscape(searchPath)} -type f -name ${shellEscape(pattern)} 2>/dev/null | head -200`;
+        }
+        const result = await runCommand(cmd);
         return result || "(no files found)";
       },
 
@@ -215,43 +223,17 @@ export class HandAgent {
           if (!description || !cronExpr)
             return "Error: description and cron_expr required for schedule.";
           if (!this.services.cronSchedule) return "Error: cron not configured.";
-          const id = this.services.cronSchedule(description, cronExpr);
+          // Extract chatId from source chat path: mouth_{chatId}.jsonl
+          const sourceName = basename(this.task.sourceChat, ".jsonl");
+          const chatId = sourceName.replace(/^mouth_/, "");
+          const id = this.services.cronSchedule(description, cronExpr, chatId);
           return `Scheduled (${id}): "${description}" with expression "${cronExpr}".`;
         }
         return `Error: unknown cron action "${action}".`;
       },
 
-      // --- Memory Query ---
-
-      memory_query: async (args) => {
-        const query = args.query as string;
-        const memRoot = this.services.memoryRoot ?? ".jawclaw/memory";
-        try {
-          const files = await collectFiles(memRoot);
-          if (files.length === 0) return "(no memory files found)";
-
-          const regex = new RegExp(query, "i");
-          const results: string[] = [];
-          for (const file of files) {
-            const content = await readFile(file, "utf-8");
-            const lines = content.split("\n");
-            const matches = lines
-              .map((line, i) => ({ line, num: i + 1 }))
-              .filter((l) => regex.test(l.line));
-            if (matches.length > 0) {
-              results.push(
-                `--- ${file} ---\n` +
-                  matches.map((m) => `${m.num}: ${m.line}`).join("\n"),
-              );
-            }
-          }
-          return results.length > 0
-            ? results.join("\n\n")
-            : `(no matches for "${query}" in memory)`;
-        } catch (err) {
-          return errMsg("memory_query", err);
-        }
-      },
+      // --- Memory (shared implementation) ---
+      ...createMemoryTools(memRoot),
     };
 
     try {
@@ -279,23 +261,10 @@ export class HandAgent {
   }
 }
 
-// --- Helpers ---
-
 function errMsg(tool: string, err: unknown): string {
   return `Error in ${tool}: ${err instanceof Error ? err.message : String(err)}`;
 }
 
 function shellEscape(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
-}
-
-async function collectFiles(dir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(dir, { withFileTypes: true, recursive: true });
-    return entries
-      .filter((e) => e.isFile())
-      .map((e) => join(e.parentPath ?? dir, e.name));
-  } catch {
-    return [];
-  }
 }

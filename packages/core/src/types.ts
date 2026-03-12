@@ -62,10 +62,16 @@ export type CronEntry = {
   nextRun: string;
 };
 
+export type CronScheduleFn = (
+  description: string,
+  cronExpr: string,
+  chatId: string,
+) => string;
+
 export type HandServices = {
   sendMessage?: SendMessageFn;
   webSearch?: WebSearchFn;
-  cronSchedule?: (description: string, cronExpr: string) => string;
+  cronSchedule?: CronScheduleFn;
   cronList?: () => CronEntry[];
   cronDelete?: (id: string) => boolean;
   memoryRoot?: string;

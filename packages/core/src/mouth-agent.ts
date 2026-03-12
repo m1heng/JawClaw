@@ -3,6 +3,7 @@ import { generateId } from "./id.js";
 import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
 import { HandAgent } from "./hand-agent.js";
+import { createMemoryTools } from "./memory-tools.js";
 import { runReactLoop } from "./react-loop.js";
 import { MOUTH_TOOLS } from "./tools.js";
 import type { AgentConfig, TaskDispatch, TaskResult, HandServices } from "./types.js";
@@ -16,9 +17,12 @@ Your job:
 - Acknowledge quickly with brief, friendly messages
 - Dispatch tasks to Hand Agents using the dispatch_task tool
 - Relay results when tasks complete
+- Use memory tools to read/write shared knowledge (user preferences, project context)
 
 Rules:
 - NEVER try to execute coding tasks yourself — always dispatch to Hand Agents
+- Check memory for relevant context before dispatching tasks
+- Write important user preferences or project context to memory
 - Be concise and friendly
 - For simple greetings or questions about yourself, respond directly without dispatching`;
 
@@ -39,7 +43,7 @@ Tools available:
 - Web: web_search
 - Messaging: message (send to IM channels)
 - Scheduling: cron (schedule/list/delete tasks)
-- Memory: memory_query (search shared memory)
+- Memory: memory_query, memory_read, memory_write, memory_list
 
 Rules:
 - Stay focused on your assigned task
@@ -51,6 +55,7 @@ export class MouthAgent {
   readonly session: ChatSession;
   readonly queue: MessageQueue;
   private activeHands: Map<string, HandAgent> = new Map();
+  private processingLock: Promise<void> = Promise.resolve();
   private sessionsDir: string;
   private config: AgentConfig;
   private llm: LLMClient;
@@ -92,13 +97,34 @@ export class MouthAgent {
     text: string,
     sendReply: (text: string) => Promise<void>,
   ): Promise<void> {
+    // Serialize per-chat: queue behind any in-flight processing
+    const prev = this.processingLock;
+    let resolve!: () => void;
+    this.processingLock = new Promise<void>((r) => { resolve = r; });
+    await prev;
+
+    try {
+      await this._handleMessage(text, sendReply);
+    } finally {
+      resolve();
+    }
+  }
+
+  private async _handleMessage(
+    text: string,
+    sendReply: (text: string) => Promise<void>,
+  ): Promise<void> {
     await this.session.append({
       ts: new Date().toISOString(),
       role: "user",
       content: text,
     });
 
+    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
     const tools: ToolRegistry = {
+      // Memory tools — shared with Hand agents, same files
+      ...createMemoryTools(memRoot),
+
       dispatch_task: async (args) => {
         const description = args.description as string;
         const taskId = generateId();

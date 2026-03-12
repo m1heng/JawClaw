@@ -29,8 +29,16 @@ export class TelegramChannel implements Channel {
 
   async start(): Promise<void> {
     console.log("Telegram bot starting (polling)...");
+    // Validate token by calling getMe before starting polling
+    await this.bot.init();
+    console.log(`Telegram bot authenticated as @${this.bot.botInfo.username}`);
+    // bot.start() runs forever (polling loop) — don't await it,
+    // but catch errors so they don't become unhandled rejections
     this.bot.start({
-      onStart: () => console.log("Telegram bot is running."),
+      onStart: () => console.log("Telegram bot polling started."),
+    }).catch((err) => {
+      console.error("Telegram polling error:", err);
+      process.exit(1);
     });
   }
 

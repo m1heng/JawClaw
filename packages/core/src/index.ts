@@ -9,8 +9,9 @@ export type {
   WebSearchFn,
   CronEntry,
   HandServices,
+  CronScheduleFn,
 } from "./types.js";
-export type { LLMClient, LLMResponse } from "./llm.js";
+export type { LLMClient, LLMResponse, LLMMessage } from "./llm.js";
 export type { ToolHandler, ToolRegistry } from "./tool-executor.js";
 export type { QueueMessage } from "./message-queue.js";
 
@@ -23,4 +24,5 @@ export { HandAgent } from "./hand-agent.js";
 export { runReactLoop } from "./react-loop.js";
 export { generateId } from "./id.js";
 export { readMemory, writeMemory } from "./memory.js";
-export { MOUTH_TOOLS, HAND_TOOLS } from "./tools.js";
+export { createMemoryTools } from "./memory-tools.js";
+export { MOUTH_TOOLS, HAND_TOOLS, MEMORY_TOOLS } from "./tools.js";

@@ -1,5 +1,67 @@
 import type { ToolDefinition } from "./types.js";
 
+// --- Shared memory tools (used by both Mouth and Hand) ---
+
+export const MEMORY_TOOLS: ToolDefinition[] = [
+  {
+    name: "memory_query",
+    description:
+      "Search shared memory files by keyword. Returns matching content from memory files.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Keyword or regex to search for in memory files",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "memory_write",
+    description:
+      "Write or update a shared memory file. Use this to persist learned facts, user preferences, project context, or task artifacts that should be available to all agents.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description:
+            'File name within the memory directory, e.g. "user-preferences.md", "project-context.md"',
+        },
+        content: {
+          type: "string",
+          description: "Content to write to the memory file",
+        },
+      },
+      required: ["name", "content"],
+    },
+  },
+  {
+    name: "memory_read",
+    description: "Read a specific memory file by name.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "File name within the memory directory",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "memory_list",
+    description: "List all files in shared memory.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+];
+
 export const MOUTH_TOOLS: ToolDefinition[] = [
   {
     name: "dispatch_task",
@@ -16,6 +78,7 @@ export const MOUTH_TOOLS: ToolDefinition[] = [
       required: ["description"],
     },
   },
+  ...MEMORY_TOOLS,
 ];
 
 export const HAND_TOOLS: ToolDefinition[] = [
@@ -193,17 +256,6 @@ export const HAND_TOOLS: ToolDefinition[] = [
     },
   },
 
-  // --- Memory ---
-  {
-    name: "memory_query",
-    description:
-      "Search shared memory files by keyword. Returns matching content from memory files.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Keyword or regex to search for in memory files" },
-      },
-      required: ["query"],
-    },
-  },
+  // --- Memory (shared with Mouth) ---
+  ...MEMORY_TOOLS,
 ];
