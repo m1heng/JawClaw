@@ -24,7 +24,8 @@ Rules:
 - Check memory for relevant context before dispatching tasks
 - Write important user preferences or project context to memory
 - Be concise and friendly
-- For simple greetings or questions about yourself, respond directly without dispatching`;
+- For simple greetings or questions about yourself, respond directly without dispatching
+- You may receive multiple user messages at once — read them all before responding`;
 
 const HAND_SYSTEM_PROMPT = `You are a Hand Agent (Claw) of JawClaw. You execute coding tasks.
 
@@ -50,12 +51,17 @@ Rules:
 - Be thorough but efficient
 - Your final message will be shown directly to the user, so make it clear and useful`;
 
+/** Max messages to batch-drain per react loop cycle. */
+const MAX_BATCH = 5;
+
+
 export class MouthAgent {
   readonly id: string;
   readonly session: ChatSession;
   readonly queue: MessageQueue;
   private activeHands: Map<string, HandAgent> = new Map();
-  private processingLock: Promise<void> = Promise.resolve();
+  private loopRunning = false;
+  private sendReply: ((text: string) => Promise<void>) | null = null;
   private sessionsDir: string;
   private config: AgentConfig;
   private llm: LLMClient;
@@ -93,36 +99,57 @@ export class MouthAgent {
     this.handServices = params.handServices ?? {};
   }
 
+  /**
+   * Enqueue a user message. If the drain loop isn't running, start it.
+   */
   async handleMessage(
     text: string,
     sendReply: (text: string) => Promise<void>,
   ): Promise<void> {
-    // Serialize per-chat: queue behind any in-flight processing
-    const prev = this.processingLock;
-    let resolve!: () => void;
-    this.processingLock = new Promise<void>((r) => { resolve = r; });
-    await prev;
+    this.sendReply = sendReply;
+    this.queue.enqueue({
+      content: text,
+      from: "user",
+      ts: new Date().toISOString(),
+    });
 
-    try {
-      await this._handleMessage(text, sendReply);
-    } finally {
-      resolve();
+    if (!this.loopRunning) {
+      this.loopRunning = true;
+      // Don't await — let it run independently
+      this.drainLoop().finally(() => {
+        this.loopRunning = false;
+      });
     }
   }
 
-  private async _handleMessage(
-    text: string,
-    sendReply: (text: string) => Promise<void>,
-  ): Promise<void> {
-    await this.session.append({
-      ts: new Date().toISOString(),
-      role: "user",
-      content: text,
-    });
+  /**
+   * Drain loop: while there are messages in the queue, batch-process them.
+   * Natural batching: messages that arrive during LLM processing
+   * accumulate in the queue and get drained in the next iteration.
+   */
+  private async drainLoop(): Promise<void> {
+    while (this.queue.length > 0) {
+      const batch = this.queue.drain(MAX_BATCH);
 
+      for (const msg of batch) {
+        await this.session.append({
+          ts: msg.ts,
+          role: "user",
+          content: msg.content,
+        });
+      }
+
+      // One react loop for the batch.
+      // While this runs, new messages accumulate in the queue.
+      await this.runOnce();
+    }
+  }
+
+  private async runOnce(): Promise<void> {
+    const sendReply = this.sendReply!;
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+
     const tools: ToolRegistry = {
-      // Memory tools — shared with Hand agents, same files
       ...createMemoryTools(memRoot),
 
       dispatch_task: async (args) => {

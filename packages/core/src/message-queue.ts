@@ -11,9 +11,12 @@ export class MessageQueue {
     this.items.push(msg);
   }
 
-  drain(): QueueMessage[] {
-    const all = this.items.splice(0);
-    return all;
+  /** Drain up to `max` items. Default: drain all. */
+  drain(max?: number): QueueMessage[] {
+    if (max === undefined || max >= this.items.length) {
+      return this.items.splice(0);
+    }
+    return this.items.splice(0, max);
   }
 
   check(): QueueMessage | null {
