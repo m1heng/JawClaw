@@ -11,10 +11,12 @@ The name encodes the architecture: **Jaw** (Mouth Agent) talks, **Claw** (Hand A
 
 These three principles govern all design decisions. When in doubt, pick the simpler path.
 
-### File-Based is the Truth
+### File-Based All the Way
 
 All persistent state — memory, chat sessions, config — lives as files on disk.
 No hidden in-memory state. If it matters, it's a file. If it's a file, any agent can read it.
+No special-purpose tools when generic file tools suffice — memory is just files,
+source chat is just a file, everything is accessed through the same file primitives.
 
 ### Pull Over Push
 
@@ -49,10 +51,26 @@ Many Hand Agents per Mouth (short-lived, task-scoped, concurrent).
 - **LLM**: OpenAI-compatible API (works with Claude, GPT, local models, any compatible endpoint)
 - **First channel**: Telegram (Bot API)
 
+## Tool Groups
+
+Tools are organized into groups to keep Mouth and Hand aligned:
+
+| Group | Tools | Mouth | Hand |
+|-------|-------|:-----:|:----:|
+| **READ** (shared) | read_file, grep, glob, memory_query | ✅ | ✅ |
+| **DISPATCH** | dispatch_task | ✅ | ❌ |
+| **WRITE** | write_file, edit_file | ❌ | ✅ |
+| **EXECUTE** | run_command | ❌ | ✅ |
+| **EXTERNAL** | web_search, message, cron | ❌ | ✅ |
+
+- `memory_query` is in READ because it's a semantic search interface (future VDB-backed), distinct from grep (regex)
+- No `memory_write/read/list` — file tools cover those (file-based all the way)
+- No `read_source_chat` — Hand uses `read_file` on the path from task description
+
 ## Key Rules
 
 - Mouth Agent NEVER executes heavy tasks directly — it dispatches to Hand Agents
-- Hand Agent receives a task description + a file path to the source chat session
+- Hand Agent receives a task description + the source chat file path
 - Hand Agent can read the chat session file at any time to get more context (pull-based)
 - Multiple Hand Agents can run concurrently from the same Mouth Agent
-- All agents read/write the same shared memory files
+- All agents read/write the same shared memory files via standard file tools

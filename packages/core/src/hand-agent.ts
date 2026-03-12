@@ -1,15 +1,16 @@
 import { exec } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { join, dirname, basename } from "node:path";
+import { dirname, basename } from "node:path";
 import { generateId } from "./id.js";
 import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
-import { createMemoryTools } from "./memory-tools.js";
+import { createReadTools } from "./read-tools.js";
 import { runReactLoop } from "./react-loop.js";
 import { HAND_TOOLS } from "./tools.js";
 import type { AgentConfig, TaskDispatch, TaskResult, HandServices } from "./types.js";
 import type { LLMClient } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
+import { join } from "node:path";
 
 function runCommand(
   command: string,
@@ -62,38 +63,27 @@ export class HandAgent {
   }
 
   async run(): Promise<TaskResult> {
+    // Include sourceChat path in the task message so Hand can read_file on it
+    const taskMessage = [
+      this.task.description,
+      "",
+      `Source chat session: ${this.task.sourceChat}`,
+      "(Use read_file to review the original conversation for more context)",
+    ].join("\n");
+
     await this.session.append({
       ts: new Date().toISOString(),
       role: "user",
-      content: this.task.description,
+      content: taskMessage,
     });
 
     const memRoot = this.services.memoryRoot ?? ".jawclaw/memory";
 
     const tools: ToolRegistry = {
-      // --- File Operations ---
+      // READ group (shared with Mouth via SSOT)
+      ...createReadTools(memRoot),
 
-      read_file: async (args) => {
-        const path = args.path as string;
-        const offset = args.offset as number | undefined;
-        const limit = args.limit as number | undefined;
-        try {
-          const content = await readFile(path, "utf-8");
-          if (offset !== undefined || limit !== undefined) {
-            const lines = content.split("\n");
-            const start = (offset ?? 1) - 1;
-            const end = limit ? start + limit : lines.length;
-            return lines
-              .slice(start, end)
-              .map((l, i) => `${start + i + 1}\t${l}`)
-              .join("\n");
-          }
-          return content;
-        } catch (err) {
-          return errMsg("read_file", err);
-        }
-      },
-
+      // WRITE group
       write_file: async (args) => {
         const path = args.path as string;
         const content = args.content as string;
@@ -123,34 +113,7 @@ export class HandAgent {
         }
       },
 
-      list_files: async (args) => {
-        const pattern = args.pattern as string;
-        const searchPath = (args.path as string) ?? ".";
-        // Use find for simple patterns, glob-style via shell for ** patterns
-        let cmd: string;
-        if (pattern.includes("**") || pattern.includes("/")) {
-          // Use shell globstar for path-based patterns
-          cmd = `bash -O globstar -c 'ls -1 ${shellEscape(searchPath)}/${pattern} 2>/dev/null' | head -200`;
-        } else {
-          cmd = `find ${shellEscape(searchPath)} -type f -name ${shellEscape(pattern)} 2>/dev/null | head -200`;
-        }
-        const result = await runCommand(cmd);
-        return result || "(no files found)";
-      },
-
-      grep: async (args) => {
-        const pattern = args.pattern as string;
-        const searchPath = (args.path as string) ?? ".";
-        const glob = args.glob as string | undefined;
-        const includeFlag = glob ? `--include='${glob}'` : "";
-        const result = await runCommand(
-          `grep -rn ${includeFlag} -E ${shellEscape(pattern)} ${shellEscape(searchPath)} 2>/dev/null | head -100`,
-        );
-        return result || "(no matches)";
-      },
-
-      // --- Command Execution ---
-
+      // EXECUTE group
       run_command: async (args) => {
         const command = args.command as string;
         const cwd = args.cwd as string | undefined;
@@ -158,18 +121,7 @@ export class HandAgent {
         return runCommand(command, cwd, timeout);
       },
 
-      // --- Context ---
-
-      read_source_chat: async () => {
-        try {
-          return await readFile(this.task.sourceChat, "utf-8");
-        } catch (err) {
-          return errMsg("read_source_chat", err);
-        }
-      },
-
-      // --- Web Search ---
-
+      // EXTERNAL group
       web_search: async (args) => {
         const query = args.query as string;
         if (!this.services.webSearch) {
@@ -181,8 +133,6 @@ export class HandAgent {
           return errMsg("web_search", err);
         }
       },
-
-      // --- Messaging ---
 
       message: async (args) => {
         const chatId = args.chat_id as string;
@@ -197,8 +147,6 @@ export class HandAgent {
           return errMsg("message", err);
         }
       },
-
-      // --- Cron ---
 
       cron: async (args) => {
         const action = args.action as string;
@@ -223,7 +171,6 @@ export class HandAgent {
           if (!description || !cronExpr)
             return "Error: description and cron_expr required for schedule.";
           if (!this.services.cronSchedule) return "Error: cron not configured.";
-          // Extract chatId from source chat path: mouth_{chatId}.jsonl
           const sourceName = basename(this.task.sourceChat, ".jsonl");
           const chatId = sourceName.replace(/^mouth_/, "");
           const id = this.services.cronSchedule(description, cronExpr, chatId);
@@ -231,9 +178,6 @@ export class HandAgent {
         }
         return `Error: unknown cron action "${action}".`;
       },
-
-      // --- Memory (shared implementation) ---
-      ...createMemoryTools(memRoot),
     };
 
     try {
@@ -263,8 +207,4 @@ export class HandAgent {
 
 function errMsg(tool: string, err: unknown): string {
   return `Error in ${tool}: ${err instanceof Error ? err.message : String(err)}`;
-}
-
-function shellEscape(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }

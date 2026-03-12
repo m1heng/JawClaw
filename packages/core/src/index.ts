@@ -23,6 +23,5 @@ export { MouthAgent } from "./mouth-agent.js";
 export { HandAgent } from "./hand-agent.js";
 export { runReactLoop } from "./react-loop.js";
 export { generateId } from "./id.js";
-export { readMemory, writeMemory } from "./memory.js";
-export { createMemoryTools } from "./memory-tools.js";
-export { MOUTH_TOOLS, HAND_TOOLS, MEMORY_TOOLS } from "./tools.js";
+export { createReadTools } from "./read-tools.js";
+export { MOUTH_TOOLS, HAND_TOOLS, READ_TOOLS } from "./tools.js";

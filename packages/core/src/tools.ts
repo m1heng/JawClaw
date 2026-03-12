@@ -1,88 +1,8 @@
 import type { ToolDefinition } from "./types.js";
 
-// --- Shared memory tools (used by both Mouth and Hand) ---
+// ── READ group (shared by Mouth and Hand) ──────────────────────────
 
-export const MEMORY_TOOLS: ToolDefinition[] = [
-  {
-    name: "memory_query",
-    description:
-      "Search shared memory files by keyword. Returns matching content from memory files.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Keyword or regex to search for in memory files",
-        },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "memory_write",
-    description:
-      "Write or update a shared memory file. Use this to persist learned facts, user preferences, project context, or task artifacts that should be available to all agents.",
-    parameters: {
-      type: "object",
-      properties: {
-        name: {
-          type: "string",
-          description:
-            'File name within the memory directory, e.g. "user-preferences.md", "project-context.md"',
-        },
-        content: {
-          type: "string",
-          description: "Content to write to the memory file",
-        },
-      },
-      required: ["name", "content"],
-    },
-  },
-  {
-    name: "memory_read",
-    description: "Read a specific memory file by name.",
-    parameters: {
-      type: "object",
-      properties: {
-        name: {
-          type: "string",
-          description: "File name within the memory directory",
-        },
-      },
-      required: ["name"],
-    },
-  },
-  {
-    name: "memory_list",
-    description: "List all files in shared memory.",
-    parameters: {
-      type: "object",
-      properties: {},
-    },
-  },
-];
-
-export const MOUTH_TOOLS: ToolDefinition[] = [
-  {
-    name: "dispatch_task",
-    description:
-      "Dispatch a task to a Hand Agent for execution. Use this for any task that requires reading files, running commands, or doing real work.",
-    parameters: {
-      type: "object",
-      properties: {
-        description: {
-          type: "string",
-          description: "Clear description of what the Hand Agent should do",
-        },
-      },
-      required: ["description"],
-    },
-  },
-  ...MEMORY_TOOLS,
-];
-
-export const HAND_TOOLS: ToolDefinition[] = [
-  // --- File Operations ---
+export const READ_TOOLS: ToolDefinition[] = [
   {
     name: "read_file",
     description: "Read the contents of a file. Supports optional line range.",
@@ -102,6 +22,85 @@ export const HAND_TOOLS: ToolDefinition[] = [
       required: ["path"],
     },
   },
+  {
+    name: "grep",
+    description:
+      "Search file contents using a regex pattern. Returns matching lines with file paths and line numbers.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "Regex pattern to search for" },
+        path: {
+          type: "string",
+          description: "File or directory to search in. Defaults to current working directory.",
+        },
+        glob: {
+          type: "string",
+          description: 'Filter files by glob pattern, e.g. "*.ts"',
+        },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "glob",
+    description:
+      "Find files matching a glob pattern. Returns file paths.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: 'Glob pattern, e.g. "src/**/*.ts", "*.json"',
+        },
+        path: {
+          type: "string",
+          description: "Directory to search in. Defaults to current working directory.",
+        },
+      },
+      required: ["pattern"],
+    },
+  },
+  {
+    name: "memory_query",
+    description:
+      "Search shared memory files by keyword or regex. Memory is a semantic search interface (future VDB-backed), distinct from grep.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Keyword or regex to search for in memory files",
+        },
+      },
+      required: ["query"],
+    },
+  },
+];
+
+// ── DISPATCH group (Mouth only) ────────────────────────────────────
+
+const DISPATCH_TOOLS: ToolDefinition[] = [
+  {
+    name: "dispatch_task",
+    description:
+      "Dispatch a task to a Hand Agent for execution. Use this for any task that requires writing files, running commands, or doing real work.",
+    parameters: {
+      type: "object",
+      properties: {
+        description: {
+          type: "string",
+          description: "Clear description of what the Hand Agent should do",
+        },
+      },
+      required: ["description"],
+    },
+  },
+];
+
+// ── WRITE group (Hand only) ────────────────────────────────────────
+
+const WRITE_TOOLS: ToolDefinition[] = [
   {
     name: "write_file",
     description: "Write content to a file. Creates the file and parent directories if they don't exist. Overwrites existing content.",
@@ -128,47 +127,11 @@ export const HAND_TOOLS: ToolDefinition[] = [
       required: ["path", "old_string", "new_string"],
     },
   },
-  {
-    name: "list_files",
-    description:
-      "List files matching a glob pattern. Returns file paths relative to the working directory.",
-    parameters: {
-      type: "object",
-      properties: {
-        pattern: {
-          type: "string",
-          description: 'Glob pattern, e.g. "src/**/*.ts", "*.json"',
-        },
-        path: {
-          type: "string",
-          description: "Directory to search in. Defaults to current working directory.",
-        },
-      },
-      required: ["pattern"],
-    },
-  },
-  {
-    name: "grep",
-    description:
-      "Search file contents using a regex pattern. Returns matching lines with file paths and line numbers.",
-    parameters: {
-      type: "object",
-      properties: {
-        pattern: { type: "string", description: "Regex pattern to search for" },
-        path: {
-          type: "string",
-          description: "File or directory to search in. Defaults to current working directory.",
-        },
-        glob: {
-          type: "string",
-          description: 'Filter files by glob pattern, e.g. "*.ts"',
-        },
-      },
-      required: ["pattern"],
-    },
-  },
+];
 
-  // --- Command Execution ---
+// ── EXECUTE group (Hand only) ──────────────────────────────────────
+
+const EXECUTE_TOOLS: ToolDefinition[] = [
   {
     name: "run_command",
     description:
@@ -186,19 +149,11 @@ export const HAND_TOOLS: ToolDefinition[] = [
       required: ["command"],
     },
   },
+];
 
-  // --- Context ---
-  {
-    name: "read_source_chat",
-    description:
-      "Read the Mouth Agent's chat session to get more context about the user's request.",
-    parameters: {
-      type: "object",
-      properties: {},
-    },
-  },
+// ── EXTERNAL group (Hand only) ─────────────────────────────────────
 
-  // --- Web ---
+const EXTERNAL_TOOLS: ToolDefinition[] = [
   {
     name: "web_search",
     description: "Search the web and return results.",
@@ -210,8 +165,6 @@ export const HAND_TOOLS: ToolDefinition[] = [
       required: ["query"],
     },
   },
-
-  // --- Messaging ---
   {
     name: "message",
     description:
@@ -225,8 +178,6 @@ export const HAND_TOOLS: ToolDefinition[] = [
       required: ["chat_id", "text"],
     },
   },
-
-  // --- Cron / Scheduling ---
   {
     name: "cron",
     description:
@@ -255,7 +206,18 @@ export const HAND_TOOLS: ToolDefinition[] = [
       required: ["action"],
     },
   },
+];
 
-  // --- Memory (shared with Mouth) ---
-  ...MEMORY_TOOLS,
+// ── Composed tool sets ─────────────────────────────────────────────
+
+export const MOUTH_TOOLS: ToolDefinition[] = [
+  ...READ_TOOLS,
+  ...DISPATCH_TOOLS,
+];
+
+export const HAND_TOOLS: ToolDefinition[] = [
+  ...READ_TOOLS,
+  ...WRITE_TOOLS,
+  ...EXECUTE_TOOLS,
+  ...EXTERNAL_TOOLS,
 ];

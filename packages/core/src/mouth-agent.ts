@@ -3,7 +3,7 @@ import { generateId } from "./id.js";
 import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
 import { HandAgent } from "./hand-agent.js";
-import { createMemoryTools } from "./memory-tools.js";
+import { createReadTools } from "./read-tools.js";
 import { runReactLoop } from "./react-loop.js";
 import { MOUTH_TOOLS } from "./tools.js";
 import type { AgentConfig, TaskDispatch, TaskResult, HandServices } from "./types.js";
@@ -17,12 +17,12 @@ Your job:
 - Acknowledge quickly with brief, friendly messages
 - Dispatch tasks to Hand Agents using the dispatch_task tool
 - Relay results when tasks complete
-- Use memory tools to read/write shared knowledge (user preferences, project context)
+- Use read_file, grep, glob to gather context before dispatching
+- Use memory_query to search shared memory for relevant context
 
 Rules:
 - NEVER try to execute coding tasks yourself — always dispatch to Hand Agents
-- Check memory for relevant context before dispatching tasks
-- Write important user preferences or project context to memory
+- You can READ files and search, but NEVER write files or run commands
 - Be concise and friendly
 - For simple greetings or questions about yourself, respond directly without dispatching
 - You may receive multiple user messages at once — read them all before responding`;
@@ -32,19 +32,15 @@ const HAND_SYSTEM_PROMPT = `You are a Hand Agent (Claw) of JawClaw. You execute 
 Your job:
 - Execute the task described in your initial message
 - Use tools to read files, run commands, write/edit files, search, and gather information
+- The source chat session path is included in your task — use read_file on it for more context
 - Provide a clear, concise summary when done
 
-Available context:
-- Use read_source_chat to see the original IM conversation for more context
-- You have access to the workspace files and shared memory
-
 Tools available:
-- File ops: read_file, write_file, edit_file, list_files, grep
-- Commands: run_command
-- Web: web_search
-- Messaging: message (send to IM channels)
-- Scheduling: cron (schedule/list/delete tasks)
-- Memory: memory_query, memory_read, memory_write, memory_list
+- Read: read_file, grep, glob
+- Write: write_file, edit_file
+- Execute: run_command
+- External: web_search, message (send to IM channels), cron (schedule/list/delete tasks)
+- Memory: memory_query (search shared memory), write_file to .jawclaw/memory/ for persistence
 
 Rules:
 - Stay focused on your assigned task
@@ -150,8 +146,10 @@ export class MouthAgent {
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
 
     const tools: ToolRegistry = {
-      ...createMemoryTools(memRoot),
+      // READ group (shared with Hand via SSOT)
+      ...createReadTools(memRoot),
 
+      // DISPATCH group
       dispatch_task: async (args) => {
         const description = args.description as string;
         const taskId = generateId();
