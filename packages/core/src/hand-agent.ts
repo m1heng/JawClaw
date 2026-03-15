@@ -35,10 +35,17 @@ function runCommand(
   });
 }
 
+export type HandStatus = "running" | "completed" | "failed";
+
 export class HandAgent {
   readonly id: string;
   readonly session: ChatSession;
   readonly queue: MessageQueue;
+  readonly abortController = new AbortController();
+
+  status: HandStatus = "running";
+  currentTurn = 0;
+  taskDescription: string;
 
   private task: TaskDispatch;
   private config: AgentConfig;
@@ -54,6 +61,7 @@ export class HandAgent {
   }) {
     this.id = generateId();
     this.task = params.task;
+    this.taskDescription = params.task.description;
     this.config = { ...params.config, tools: HAND_TOOLS };
     this.llm = params.llm;
     this.services = params.services ?? {};
@@ -199,14 +207,28 @@ export class HandAgent {
         config,
         llm: this.llm,
         tools,
+        abortSignal: this.abortController.signal,
+        onTurn: () => { this.currentTurn++; },
       });
 
+      if (this.abortController.signal.aborted) {
+        this.status = "failed";
+        return {
+          taskId: this.task.taskId,
+          status: "failed",
+          summary: "",
+          error: "Task was cancelled.",
+        };
+      }
+
+      this.status = "completed";
       return {
         taskId: this.task.taskId,
         status: "completed",
         summary,
       };
     } catch (err) {
+      this.status = "failed";
       return {
         taskId: this.task.taskId,
         status: "failed",

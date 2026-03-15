@@ -25,11 +25,10 @@
   - 超限时 70% head + 20% tail 截断，缺失则跳过
   - Mouth 注入 SOUL + AGENTS + USER + MEMORY；Hand 注入 SOUL + AGENTS + USER
 
-- [ ] **Hand 可观测性与可控性**
-  - Mouth dispatch 后对 Hand 是黑盒，无法查状态、无法中止
-  - Hand 暴露运行状态（running/completed/failed + 当前 turn 数）
-  - Mouth 可查询 activeHands 状态
-  - 连接 abortSignal（react-loop 已有参数，但未接入）
+- [x] **Hand 可观测性与可控性**
+  - Hand 暴露 status/currentTurn/taskDescription 公开属性
+  - Mouth 新增 list_tasks 和 cancel_task 工具
+  - AbortController 连接 react-loop，cancel 后标记 failed 而非 completed
 
 - [ ] **消息分片（chunking）**
   - 长回复超过 channel 限制时被截断

@@ -21,6 +21,7 @@ export { CronScheduler } from "./cron.js";
 export { createLLMClient } from "./llm.js";
 export { MouthAgent } from "./mouth-agent.js";
 export { HandAgent } from "./hand-agent.js";
+export type { HandStatus } from "./hand-agent.js";
 export { runReactLoop } from "./react-loop.js";
 export { generateId } from "./id.js";
 export { createReadTools } from "./read-tools.js";

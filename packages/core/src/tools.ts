@@ -96,6 +96,30 @@ const DISPATCH_TOOLS: ToolDefinition[] = [
       required: ["description"],
     },
   },
+  {
+    name: "list_tasks",
+    description:
+      "List all active Hand Agent tasks with their status and progress.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "cancel_task",
+    description:
+      "Cancel a running Hand Agent task by its task ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: {
+          type: "string",
+          description: "The task ID to cancel",
+        },
+      },
+      required: ["task_id"],
+    },
+  },
 ];
 
 // ── WRITE group (Hand only) ────────────────────────────────────────

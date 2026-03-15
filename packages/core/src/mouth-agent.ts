@@ -206,6 +206,24 @@ export class MouthAgent {
 
         return `Task dispatched (${taskId}). You will be notified when it completes.`;
       },
+
+      list_tasks: async () => {
+        if (this.activeHands.size === 0) return "(no active tasks)";
+        const lines: string[] = [];
+        for (const [id, hand] of this.activeHands) {
+          lines.push(`${id}  ${hand.status}  turn ${hand.currentTurn}  ${hand.taskDescription.slice(0, 80)}`);
+        }
+        return lines.join("\n");
+      },
+
+      cancel_task: async (args) => {
+        const taskId = args.task_id as string;
+        const hand = this.activeHands.get(taskId);
+        if (!hand) return `Error: task ${taskId} not found.`;
+        hand.abortController.abort();
+        // Don't delete from activeHands — the run() callback handles cleanup
+        return `Task ${taskId} cancellation requested.`;
+      },
     };
 
     await runReactLoop({
@@ -224,6 +242,16 @@ export class MouthAgent {
     result: TaskResult,
     sendReply: (text: string) => Promise<void>,
   ): Promise<void> {
+    // Cancelled tasks: record in session but don't notify user
+    if (result.error === "Task was cancelled.") {
+      await this.session.append({
+        ts: new Date().toISOString(),
+        role: "system",
+        content: `[Hand Agent task ${result.taskId} was cancelled]`,
+      });
+      return;
+    }
+
     const message =
       result.status === "completed"
         ? result.summary
