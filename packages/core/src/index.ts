@@ -25,3 +25,9 @@ export { runReactLoop } from "./react-loop.js";
 export { generateId } from "./id.js";
 export { createReadTools } from "./read-tools.js";
 export { MOUTH_TOOLS, HAND_TOOLS, READ_TOOLS } from "./tools.js";
+export {
+  estimateTokens,
+  estimateMessageTokens,
+  compactHistory,
+  buildSystemPrompt,
+} from "./context.js";

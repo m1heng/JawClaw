@@ -2,20 +2,20 @@
 
 ## P0 — 不做就不能用于真实场景
 
-- [ ] **Context compaction（上下文压缩）**
-  - 长对话必爆 context window，当前 react-loop 只有圈数限制没有 token 感知
-  - 需要：token 估算、摘要策略、历史消息裁剪
+- [x] **Context compaction（上下文压缩）**
+  - react-loop 调用 LLM 前估算 token，超预算则从旧消息裁剪
   - 压缩只影响发给 LLM 的 messages，session 文件保持完整（SSOT）
+  - tool-call 组原子性保留，始终保留最新 unit
 
-- [ ] **启动时注入 MEMORY.md 到 system prompt**
-  - Agent 跨会话完全失忆，不知道有哪些记忆文件可用
-  - Mouth/Hand 启动时读 `.jawclaw/memory/MEMORY.md`，拼入 system prompt
-  - MEMORY.md 作为索引，列出所有记忆文件的摘要和路径
+- [x] **启动时注入 MEMORY.md 到 system prompt**
+  - Mouth 每次 runOnce 读 MEMORY.md 拼入 system prompt（保持最新）
+  - Hand 不注入全文，仅在 prompt 中提示 memory 目录路径
+  - 文件不存在则跳过，超 4000 chars 截断
 
-- [ ] **会话空闲时自动生成摘要存盘**
-  - 对话中的决策、偏好、事实不会自动沉淀，下次全丢
-  - drainLoop 空闲时检测新增消息量，超阈值则 dispatch 一个 Hand 生成摘要
-  - 写入 `memory/sessions/YYYY-MM-DD-slug.md`，同时更新 MEMORY.md 索引
+- [x] **会话空闲时自动生成摘要存盘**
+  - drainLoop 空闲时检测新增消息量，超 20 条则 dispatch 摘要 Hand
+  - 写入 `memory/sessions/YYYY-MM-DD-chat-{id}-{ts}.md`，更新 MEMORY.md
+  - checkpoint 持久化到磁盘，重启不重复摘要
 
 ## P1 — 显著提升体验
 

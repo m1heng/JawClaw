@@ -4,6 +4,7 @@ import type { AgentConfig } from "./types.js";
 import type { LLMClient, LLMMessage } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import { executeTool } from "./tool-executor.js";
+import { estimateTokens, compactHistory } from "./context.js";
 
 export type ReactLoopParams = {
   session: ChatSession;
@@ -29,40 +30,61 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       await session.append(chatMsg);
     }
 
-    // Build messages for LLM, preserving tool_calls on assistant messages
+    // Build messages for LLM with compaction if needed
     const history = await session.readAll();
+    const maxContextTokens = config.maxContextTokens ?? 100_000;
+
+    // Estimate baseline overhead (system prompt + tool definitions)
+    const systemTokens = estimateTokens(config.systemPrompt);
+    const toolsOverhead = config.tools?.length
+      ? estimateTokens(JSON.stringify(config.tools))
+      : 0;
+    const availableBudget = maxContextTokens - systemTokens - toolsOverhead;
+
+    const { kept, trimmedCount } = compactHistory(history, availableBudget);
+
     const messages: LLMMessage[] = [
       { role: "system", content: config.systemPrompt },
-      ...history.map((m): LLMMessage => {
-        if (m.role === "tool") {
-          return {
-            role: "tool",
-            content: m.content,
-            tool_call_id: m.meta?.tool_call_id as string,
-          };
-        }
-        if (m.role === "assistant" && m.meta?.tool_calls) {
-          const toolCalls = m.meta.tool_calls as Array<{
-            id: string;
-            name: string;
-            arguments: Record<string, unknown>;
-          }>;
-          return {
-            role: "assistant",
-            content: m.content,
-            tool_calls: toolCalls.map((tc) => ({
-              id: tc.id,
-              type: "function" as const,
-              function: {
-                name: tc.name,
-                arguments: JSON.stringify(tc.arguments),
-              },
-            })),
-          };
-        }
-        return { role: m.role as "user" | "system", content: m.content };
-      }),
     ];
+
+    if (trimmedCount > 0) {
+      messages.push({
+        role: "system",
+        content: `[${trimmedCount} earlier messages omitted due to context limits. Use read_file on "${session.filePath}" for complete history.]`,
+      });
+    }
+
+    const toMessage = (m: (typeof kept)[number]): LLMMessage => {
+      if (m.role === "tool") {
+        return {
+          role: "tool",
+          content: m.content,
+          tool_call_id: m.meta?.tool_call_id as string,
+        };
+      }
+      if (m.role === "assistant" && m.meta?.tool_calls) {
+        const toolCalls = m.meta.tool_calls as Array<{
+          id: string;
+          name: string;
+          arguments: Record<string, unknown>;
+        }>;
+        return {
+          role: "assistant",
+          content: m.content,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.arguments),
+            },
+          })),
+        };
+      }
+      return { role: m.role as "user" | "system", content: m.content };
+    };
+
+    messages.push(...kept.map(toMessage));
 
     // Call LLM
     const response = await llm.createCompletion({

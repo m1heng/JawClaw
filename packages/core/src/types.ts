@@ -42,6 +42,7 @@ export type AgentConfig = {
   systemPrompt: string;
   tools: ToolDefinition[];
   maxTurns?: number;
+  maxContextTokens?: number;
 };
 
 // --- Service interfaces for pluggable capabilities ---
