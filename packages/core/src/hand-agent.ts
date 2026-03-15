@@ -6,6 +6,7 @@ import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
 import { createReadTools } from "./read-tools.js";
 import { runReactLoop } from "./react-loop.js";
+import { buildSystemPrompt, handBootstrapFiles } from "./context.js";
 import { HAND_TOOLS } from "./tools.js";
 import type { AgentConfig, TaskDispatch, TaskResult, HandServices } from "./types.js";
 import type { LLMClient } from "./llm.js";
@@ -78,6 +79,17 @@ export class HandAgent {
     });
 
     const memRoot = this.services.memoryRoot ?? ".jawclaw/memory";
+
+    // Inject identity files (SOUL.md, AGENTS.md, USER.md) + memory path hint
+    const basePrompt =
+      this.config.systemPrompt +
+      `\n\nMemory directory: ${memRoot}/` +
+      `\nRead ${memRoot}/MEMORY.md for the memory index.`;
+    const systemPrompt = await buildSystemPrompt(
+      basePrompt,
+      handBootstrapFiles(memRoot),
+    );
+    const config = { ...this.config, systemPrompt };
 
     const tools: ToolRegistry = {
       // READ group (shared with Mouth via SSOT)
@@ -184,7 +196,7 @@ export class HandAgent {
       const summary = await runReactLoop({
         session: this.session,
         queue: this.queue,
-        config: this.config,
+        config,
         llm: this.llm,
         tools,
       });

@@ -6,7 +6,7 @@ import { MessageQueue } from "./message-queue.js";
 import { HandAgent } from "./hand-agent.js";
 import { createReadTools } from "./read-tools.js";
 import { runReactLoop } from "./react-loop.js";
-import { buildSystemPrompt } from "./context.js";
+import { buildSystemPrompt, mouthBootstrapFiles } from "./context.js";
 import { MOUTH_TOOLS } from "./tools.js";
 import type { AgentConfig, TaskDispatch, TaskResult, HandServices } from "./types.js";
 import type { LLMClient } from "./llm.js";
@@ -93,14 +93,9 @@ export class MouthAgent {
     };
     this.llm = params.llm;
 
-    // Hand system prompt: include memory directory path hint (not full content)
-    const memRoot = params.handServices?.memoryRoot ?? ".jawclaw/memory";
     this.handConfig = {
       ...params.handConfig,
-      systemPrompt:
-        HAND_SYSTEM_PROMPT +
-        `\n\nMemory directory: ${memRoot}/` +
-        `\nRead ${memRoot}/MEMORY.md for the memory index and available context files.`,
+      systemPrompt: HAND_SYSTEM_PROMPT,
       tools: [],
     };
     this.handLlm = params.handLlm;
@@ -160,10 +155,10 @@ export class MouthAgent {
     const sendReply = this.sendReply!;
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
 
-    // Inject MEMORY.md into system prompt (re-read each cycle for freshness)
+    // Inject bootstrap files (SOUL.md, AGENTS.md, USER.md, MEMORY.md)
     const systemPrompt = await buildSystemPrompt(
       MOUTH_SYSTEM_PROMPT,
-      memRoot,
+      mouthBootstrapFiles(memRoot),
     );
     const configWithMemory = { ...this.config, systemPrompt };
 

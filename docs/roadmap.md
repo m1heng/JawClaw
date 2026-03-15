@@ -19,10 +19,11 @@
 
 ## P1 — 显著提升体验
 
-- [ ] **File-based identity（文件定义 agent 身份）**
-  - 当前 system prompt 硬编码在代码里，用户无法定制 agent 行为
-  - 支持 workspace 下的 `SOUL.md`（人设）、`AGENTS.md`（指令）、`USER.md`（用户信息）
-  - 启动时读取，拼入 system prompt，缺失则用默认值
+- [x] **File-based identity（文件定义 agent 身份）**
+  - 启动时读取 `.jawclaw/SOUL.md`（人设）、`AGENTS.md`（指令）、`USER.md`（用户信息）
+  - 全量注入 system prompt，per-file 8K / 总计 32K chars 预算
+  - 超限时 70% head + 20% tail 截断，缺失则跳过
+  - Mouth 注入 SOUL + AGENTS + USER + MEMORY；Hand 注入 SOUL + AGENTS + USER
 
 - [ ] **Hand 可观测性与可控性**
   - Mouth dispatch 后对 Hand 是黑盒，无法查状态、无法中止

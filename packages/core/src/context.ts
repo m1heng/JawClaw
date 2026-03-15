@@ -74,34 +74,82 @@ export function compactHistory(
   return { kept, trimmedCount };
 }
 
-// ── System prompt building ───────────────────────────────────────
+// ── Bootstrap file injection ─────────────────────────────────────
 
-const MAX_MEMORY_INJECTION = 4000;
-const TRUNCATION_MARKER =
-  "\n\n[... MEMORY.md truncated, use read_file for full content ...]";
+const DEFAULT_MAX_PER_FILE = 8_000;
+const DEFAULT_MAX_TOTAL = 32_000;
+
+export type BootstrapFile = {
+  label: string;
+  path: string;
+};
+
+/** Truncate content: keep 70% head + 20% tail, discard middle. */
+function truncateContent(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  const headSize = Math.floor(maxChars * 0.7);
+  const tailSize = Math.floor(maxChars * 0.2);
+  return (
+    content.slice(0, headSize) +
+    "\n\n[... truncated, use read_file for full content ...]\n\n" +
+    content.slice(-tailSize)
+  );
+}
 
 /**
- * Build a system prompt by appending MEMORY.md content.
- * Returns base prompt unchanged if MEMORY.md is missing or empty.
+ * Build a system prompt by appending bootstrap files.
+ *
+ * Files that don't exist are silently skipped.
+ * Per-file and total char budgets prevent context bloat.
+ * Large files are truncated with 70% head + 20% tail strategy.
  */
 export async function buildSystemPrompt(
   basePrompt: string,
-  memoryRoot: string,
+  files: BootstrapFile[],
+  opts?: { maxPerFile?: number; maxTotal?: number },
 ): Promise<string> {
-  try {
-    let content = await readFile(join(memoryRoot, "MEMORY.md"), "utf-8");
-    if (!content.trim()) return basePrompt;
+  const maxPerFile = opts?.maxPerFile ?? DEFAULT_MAX_PER_FILE;
+  let remaining = opts?.maxTotal ?? DEFAULT_MAX_TOTAL;
 
-    if (content.length > MAX_MEMORY_INJECTION) {
-      content = content.slice(0, MAX_MEMORY_INJECTION) + TRUNCATION_MARKER;
+  const sections: string[] = [];
+
+  for (const file of files) {
+    if (remaining <= 0) break;
+    try {
+      const raw = await readFile(file.path, "utf-8");
+      if (!raw.trim()) continue;
+
+      const budget = Math.min(maxPerFile, remaining);
+      const content = truncateContent(raw, budget);
+      remaining -= content.length;
+
+      sections.push(`## ${file.label}\n\n${content}`);
+    } catch {
+      // File doesn't exist — skip
     }
-
-    return (
-      basePrompt +
-      "\n\n---\n\n## Shared Memory (MEMORY.md)\n\n" +
-      content
-    );
-  } catch {
-    return basePrompt;
   }
+
+  if (sections.length === 0) return basePrompt;
+  return basePrompt + "\n\n---\n\n" + sections.join("\n\n");
+}
+
+/** Standard bootstrap files for Mouth (identity + memory). */
+export function mouthBootstrapFiles(memoryRoot: string): BootstrapFile[] {
+  const wsRoot = join(memoryRoot, "..");
+  return [
+    { label: "SOUL.md", path: join(wsRoot, "SOUL.md") },
+    { label: "AGENTS.md", path: join(wsRoot, "AGENTS.md") },
+    { label: "USER.md", path: join(wsRoot, "USER.md") },
+    { label: "MEMORY.md", path: join(memoryRoot, "MEMORY.md") },
+  ];
+}
+
+/** Standard bootstrap files for Hand (identity only, no memory). */
+export function handBootstrapFiles(memoryRoot: string): BootstrapFile[] {
+  const wsRoot = join(memoryRoot, "..");
+  return [
+    { label: "SOUL.md", path: join(wsRoot, "SOUL.md") },
+    { label: "AGENTS.md", path: join(wsRoot, "AGENTS.md") },
+    { label: "USER.md", path: join(wsRoot, "USER.md") },
+  ];
 }

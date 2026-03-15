@@ -30,4 +30,7 @@ export {
   estimateMessageTokens,
   compactHistory,
   buildSystemPrompt,
+  mouthBootstrapFiles,
+  handBootstrapFiles,
 } from "./context.js";
+export type { BootstrapFile } from "./context.js";
