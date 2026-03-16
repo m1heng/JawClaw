@@ -30,9 +30,9 @@
   - Mouth 新增 list_tasks 和 cancel_task 工具
   - AbortController 连接 react-loop，cancel 后标记 failed 而非 completed
 
-- [ ] **消息分片（chunking）**
-  - 长回复超过 channel 限制时被截断
-  - per-channel 的 textChunkLimit 配置 + 分片发送逻辑
+- [x] **消息分片（chunking）**
+  - Telegram sendReply 自动分片（4096 chars 限制）
+  - 优先在段落/换行处断开，最后才硬截断
 
 - [ ] **`memory_query` 增强**
   - 当前只有 regex，记忆文件多了找不到
