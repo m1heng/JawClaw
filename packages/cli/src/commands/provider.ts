@@ -20,21 +20,32 @@ async function addProvider() {
     return;
   }
 
+  const providerType = await p.select({
+    message: "LLM Provider",
+    initialValue: config.provider.type,
+    options: [
+      { value: "openai", label: "OpenAI (or compatible)" },
+      { value: "anthropic", label: "Anthropic Claude" },
+      { value: "gemini", label: "Google Gemini" },
+    ],
+  });
+  if (p.isCancel(providerType)) process.exit(0);
+
   const result = await p.group(
     {
       apiKey: () =>
         p.text({
-          message: "LLM API Key",
-          placeholder: "sk-...",
+          message: "API Key",
           initialValue: config.provider.apiKey,
           validate: (v) => (!v || v.length < 5 ? "Key too short" : undefined),
         }),
       baseUrl: () =>
-        p.text({
-          message: "Base URL (leave empty for OpenAI)",
-          placeholder: "https://api.openai.com/v1",
-          defaultValue: config.provider.baseUrl ?? "",
-        }),
+        providerType === "openai"
+          ? p.text({
+              message: "Base URL (leave empty for OpenAI)",
+              defaultValue: config.provider.baseUrl ?? "",
+            })
+          : Promise.resolve(""),
       mouthModel: () =>
         p.text({
           message: "Mouth model (fast, for chat)",
@@ -50,7 +61,7 @@ async function addProvider() {
   );
 
   config.provider = {
-    type: "openai",
+    type: providerType as string,
     apiKey: result.apiKey as string,
     baseUrl: (result.baseUrl as string) || undefined,
     mouthModel: result.mouthModel as string,

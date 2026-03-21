@@ -8,6 +8,8 @@
     "build": "tsc --build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
+    "@google/genai": "^1.46.0",
     "openai": "^4.0.0"
   }
 }

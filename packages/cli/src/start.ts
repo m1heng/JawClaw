@@ -1,15 +1,34 @@
-import { MouthAgent, CronScheduler, LocalShell } from "@jawclaw/core";
-import { createOpenAIClient } from "@jawclaw/core";
+import {
+  MouthAgent,
+  CronScheduler,
+  LocalShell,
+  createOpenAIClient,
+  createGeminiClient,
+  createAnthropicClient,
+} from "@jawclaw/core";
+import type { LLMClient, HandServices } from "@jawclaw/core";
 import { TelegramChannel } from "@jawclaw/channels";
 import type { Channel } from "@jawclaw/channels";
-import type { HandServices } from "@jawclaw/core";
-import type { Config } from "./config.js";
+import type { Config, ProviderConfig } from "./config.js";
+
+function createLLM(provider: ProviderConfig): LLMClient {
+  switch (provider.type) {
+    case "openai":
+      return createOpenAIClient(provider.apiKey, provider.baseUrl);
+    case "gemini":
+      return createGeminiClient(provider.apiKey);
+    case "anthropic":
+      return createAnthropicClient(provider.apiKey);
+    default:
+      throw new Error(`Unknown provider type: ${provider.type}`);
+  }
+}
 
 export async function startBot(config: Config) {
   const { provider, channels: channelConfigs } = config;
 
-  const mouthLlm = createOpenAIClient(provider.apiKey, provider.baseUrl);
-  const handLlm = createOpenAIClient(provider.apiKey, provider.baseUrl);
+  const mouthLlm = createLLM(provider);
+  const handLlm = createLLM(provider);
   const cron = new CronScheduler();
   const shell = new LocalShell();
 

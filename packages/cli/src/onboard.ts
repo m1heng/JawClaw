@@ -20,20 +20,32 @@ const DEFAULT_INSTRUCTIONS = `# Instructions
 export async function onboard(): Promise<Config> {
   p.intro("🐾 JawClaw — first time setup");
 
+  const providerType = await p.select({
+    message: "LLM Provider",
+    options: [
+      { value: "openai", label: "OpenAI (or compatible)" },
+      { value: "anthropic", label: "Anthropic Claude" },
+      { value: "gemini", label: "Google Gemini" },
+    ],
+  });
+  if (p.isCancel(providerType)) process.exit(0);
+
   const provider = await p.group(
     {
       apiKey: () =>
         p.text({
-          message: "LLM API Key",
-          placeholder: "sk-...",
+          message: "API Key",
+          placeholder: providerType === "openai" ? "sk-..." : "...",
           validate: (v) => (!v || v.length < 5 ? "Key too short" : undefined),
         }),
       baseUrl: () =>
-        p.text({
-          message: "Base URL (leave empty for OpenAI)",
-          placeholder: "https://api.openai.com/v1",
-          defaultValue: "",
-        }),
+        providerType === "openai"
+          ? p.text({
+              message: "Base URL (leave empty for OpenAI)",
+              placeholder: "https://api.openai.com/v1",
+              defaultValue: "",
+            })
+          : Promise.resolve(""),
     },
     { onCancel: () => process.exit(0) },
   );
@@ -51,13 +63,20 @@ export async function onboard(): Promise<Config> {
     { onCancel: () => process.exit(0) },
   );
 
+  const defaultModels: Record<string, { mouth: string; hand: string }> = {
+    openai: { mouth: "gpt-4o-mini", hand: "gpt-4o" },
+    anthropic: { mouth: "claude-sonnet-4-20250514", hand: "claude-sonnet-4-20250514" },
+    gemini: { mouth: "gemini-2.5-flash", hand: "gemini-2.5-pro" },
+  };
+  const models = defaultModels[providerType as string] ?? defaultModels.openai;
+
   const config: Config = {
     provider: {
-      type: "openai",
+      type: providerType as string,
       apiKey: provider.apiKey as string,
       baseUrl: (provider.baseUrl as string) || undefined,
-      mouthModel: "gpt-4o-mini",
-      handModel: "gpt-4o",
+      mouthModel: models.mouth,
+      handModel: models.hand,
     },
     channels: [{ type: "telegram", token: channel.token as string }],
   };
