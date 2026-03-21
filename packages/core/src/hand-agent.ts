@@ -1,6 +1,6 @@
 import { exec } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { dirname, basename } from "node:path";
+import { dirname } from "node:path";
 import { generateId } from "./id.js";
 import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
@@ -191,8 +191,7 @@ export class HandAgent {
           if (!description || !cronExpr)
             return "Error: description and cron_expr required for schedule.";
           if (!this.services.cronSchedule) return "Error: cron not configured.";
-          const sourceName = basename(this.task.sourceChat, ".jsonl");
-          const chatId = sourceName.replace(/^mouth_/, "");
+          const chatId = this.task.replyTo ?? "unknown";
           const id = this.services.cronSchedule(description, cronExpr, chatId);
           return `Scheduled (${id}): "${description}" with expression "${cronExpr}".`;
         }

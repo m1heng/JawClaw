@@ -138,8 +138,7 @@ export function mouthBootstrapFiles(memoryRoot: string): BootstrapFile[] {
   const wsRoot = join(memoryRoot, "..");
   return [
     { label: "SOUL.md", path: join(wsRoot, "SOUL.md") },
-    { label: "AGENTS.md", path: join(wsRoot, "AGENTS.md") },
-    { label: "USER.md", path: join(wsRoot, "USER.md") },
+    { label: "INSTRUCTIONS.md", path: join(wsRoot, "INSTRUCTIONS.md") },
     { label: "MEMORY.md", path: join(memoryRoot, "MEMORY.md") },
   ];
 }
@@ -149,7 +148,6 @@ export function handBootstrapFiles(memoryRoot: string): BootstrapFile[] {
   const wsRoot = join(memoryRoot, "..");
   return [
     { label: "SOUL.md", path: join(wsRoot, "SOUL.md") },
-    { label: "AGENTS.md", path: join(wsRoot, "AGENTS.md") },
-    { label: "USER.md", path: join(wsRoot, "USER.md") },
+    { label: "INSTRUCTIONS.md", path: join(wsRoot, "INSTRUCTIONS.md") },
   ];
 }

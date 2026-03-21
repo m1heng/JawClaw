@@ -18,36 +18,14 @@ export async function startBot() {
   const cron = new CronScheduler();
 
   const sessionsDir = ".jawclaw/sessions";
-  const mouths = new Map<string, MouthAgent>();
-
-  const getMouth = (chatId: string): MouthAgent => {
-    let mouth = mouths.get(chatId);
-    if (!mouth) {
-      mouth = new MouthAgent({
-        chatId,
-        sessionsDir,
-        config: { model: mouthModel, apiKey, baseUrl },
-        llm: mouthLlm,
-        handConfig: { model: handModel, apiKey, baseUrl },
-        handLlm: handLlm,
-        handServices,
-      });
-      mouths.set(chatId, mouth);
-    }
-    return mouth;
-  };
 
   const handServices: HandServices = {
     sendMessage: (chatId, text) => channel.sendReply(chatId, text),
     cronSchedule: (description, cronExpr, chatId) =>
       cron.schedule(description, cronExpr, async (desc) => {
-        // When cron fires, dispatch the task through the originating Mouth
-        const mouth = getMouth(chatId);
         await mouth.handleMessage(
           `[Scheduled task triggered] ${desc}`,
-          async (reply) => {
-            await channel.sendReply(chatId, reply);
-          },
+          { chatId, senderId: "system", senderName: "Cron", channel: "cron" },
         );
       }),
     cronList: () => cron.list(),
@@ -55,11 +33,23 @@ export async function startBot() {
     memoryRoot: ".jawclaw/memory",
   };
 
+  const mouth = new MouthAgent({
+    sessionsDir,
+    config: { model: mouthModel, apiKey, baseUrl },
+    llm: mouthLlm,
+    handConfig: { model: handModel, apiKey, baseUrl },
+    handLlm: handLlm,
+    handServices,
+    sendMessage: (chatId, text) => channel.sendReply(chatId, text),
+  });
+
   channel.onMessage(async (msg) => {
-    const mouth = getMouth(msg.chatId);
     await channel.sendTyping(msg.chatId);
-    await mouth.handleMessage(msg.text, async (reply) => {
-      await channel.sendReply(msg.chatId, reply);
+    await mouth.handleMessage(msg.text, {
+      chatId: msg.chatId,
+      senderId: msg.senderId,
+      senderName: msg.senderName,
+      channel: msg.channel,
     });
   });
 
