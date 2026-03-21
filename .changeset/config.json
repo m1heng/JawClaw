@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": [
+    "@changesets/changelog-github",
+    { "repo": "m1heng/JawClaw" }
+  ],
+  "commit": false,
+  "fixed": [["@jawclaw/core", "@jawclaw/channels", "jawclaw"]],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch"
+}

@@ -2,75 +2,139 @@
 
 ## What is JawClaw
 
-JawClaw is a dual-layer agent framework for IM-connected coding agents.
-The name encodes the architecture: **Jaw** (Mouth Agent) talks, **Claw** (Hand Agent) works.
+Dual-layer agent framework for IM-connected coding agents.
+**Jaw** (Mouth Agent) talks, **Claw** (Hand Agent) works.
 
-## Design Philosophy
+## Design Principles
 
-### SSOT / DRY / KISS
+- **SSOT / DRY / KISS** — simple over clever, no duplication, one source of truth
+- **File-based all the way** — all state is files on disk, no hidden in-memory state
+- **Pull over push** — agents pull context when they need it
+- **Shell abstraction** — all I/O goes through `Shell` interface (swap LocalShell for Docker/remote)
+- **LLM abstraction** — all LLM calls go through `LLMClient` interface (swap OpenAI for Claude/Gemini)
 
-These three principles govern all design decisions. When in doubt, pick the simpler path.
+## Architecture
 
-### File-Based All the Way
+### Single Session Model
 
-All persistent state — memory, chat sessions, config — lives as files on disk.
-No hidden in-memory state. If it matters, it's a file. If it's a file, any agent can read it.
-No special-purpose tools when generic file tools suffice — memory is just files,
-source chat is just a file, everything is accessed through the same file primitives.
+One global Mouth Agent with one unified session (`mouth.jsonl`).
+All channels (Telegram, future Discord, etc.) feed into this single session.
+Mouth uses the `message` tool to explicitly reply — its text output is internal reasoning, NOT sent to any channel.
 
-### Pull Over Push
+### Dual-Layer Agents
 
-Agents pull context when they need it, rather than having context pushed to them upfront.
-This avoids information loss from premature summarization and lets each agent decide
-what it needs at the moment it needs it.
+| | Mouth (Jaw) | Hand (Claw) |
+|---|---|---|
+| Count | 1 global | N per task |
+| Lifecycle | Long-lived | Short-lived |
+| Model | Fast (e.g. gpt-5.4-mini) | Strong (e.g. gpt-5.4) |
+| Can read | Files, memory, session | Files, memory, source chat |
+| Can write | Nothing | Files, commands, messages |
+| Session | `mouth.jsonl` | `hand_{taskId}.jsonl` |
 
-### Shared Context, Separate Sessions
-
-All agents share the same file-based context (workspace, memory, config).
-The only thing that differs between agents is their chat session history.
-This is the core architectural invariant of JawClaw.
-
-### Mouth is Singular, Hand is Plural
-
-One Mouth Agent per chat session (long-lived, conversational).
-Many Hand Agents per Mouth (short-lived, task-scoped, concurrent).
-
-## Naming Conventions
-
-| Concept | Name | Metaphor |
-|---------|------|----------|
-| IM-facing agent | Mouth Agent | Jaw — talks to the user |
-| Task-executing agent | Hand Agent | Claw — does the work |
-| Chat conversation log | Chat Session (.jsonl) | Append-only dialogue record |
-| Shared persistent state | Memory | File-based, workspace-scoped |
-
-## Tech Stack
-
-- **Language**: TypeScript
-- **Project structure**: Monorepo (pnpm workspace) — `packages/core`, `packages/channels`, `packages/cli`
-- **LLM**: OpenAI-compatible API (works with Claude, GPT, local models, any compatible endpoint)
-- **First channel**: Telegram (Bot API)
-
-## Tool Groups
-
-Tools are organized into groups to keep Mouth and Hand aligned:
+### Tool Groups
 
 | Group | Tools | Mouth | Hand |
 |-------|-------|:-----:|:----:|
-| **READ** (shared) | read_file, grep, glob, memory_query | ✅ | ✅ |
-| **DISPATCH** | dispatch_task | ✅ | ❌ |
-| **WRITE** | write_file, edit_file | ❌ | ✅ |
-| **EXECUTE** | run_command | ❌ | ✅ |
-| **EXTERNAL** | web_search, message, cron | ❌ | ✅ |
+| **READ** | read_file, grep, glob, memory_query | yes | yes |
+| **DISPATCH** | dispatch_task, list_tasks, cancel_task | yes | no |
+| **MESSAGE** | message | yes | yes |
+| **WRITE** | write_file, edit_file | no | yes |
+| **EXECUTE** | run_command | no | yes |
+| **EXTERNAL** | web_search, cron | no | yes |
 
-- `memory_query` is in READ because it's a semantic search interface (future VDB-backed), distinct from grep (regex)
-- No `memory_write/read/list` — file tools cover those (file-based all the way)
-- No `read_source_chat` — Hand uses `read_file` on the path from task description
+## Monorepo Structure
 
-## Key Rules
+```
+packages/
+  core/        — Agent engine, providers, tools, types
+  channels/    — IM channel adapters (Telegram)
+  cli/         — CLI entry point, config, onboarding
+```
 
-- Mouth Agent NEVER executes heavy tasks directly — it dispatches to Hand Agents
-- Hand Agent receives a task description + the source chat file path
-- Hand Agent can read the chat session file at any time to get more context (pull-based)
-- Multiple Hand Agents can run concurrently from the same Mouth Agent
-- All agents read/write the same shared memory files via standard file tools
+### Key Files (core/)
+
+| File | Responsibility |
+|------|---------------|
+| `types.ts` | All shared types (ChatMessage, ToolCall, AgentConfig, HandServices) |
+| `llm.ts` | LLMClient, LLMMessage, LLMResponse — neutral types, no provider code |
+| `providers/shell.ts` | Shell interface (exec, readFile, writeFile, appendFile, mkdir, listFiles) |
+| `providers/local-shell.ts` | Node.js Shell implementation — sole file importing node:fs and child_process |
+| `providers/openai.ts` | OpenAI LLM provider — sole file importing openai SDK |
+| `providers/anthropic.ts` | Anthropic Claude LLM provider |
+| `providers/gemini.ts` | Google Gemini LLM provider |
+| `react-loop.ts` | ReAct loop — shared by Mouth and Hand, drives LLM + tool execution cycles |
+| `mouth-agent.ts` | Mouth Agent — single session, message queue, dispatch, auto-summary |
+| `hand-agent.ts` | Hand Agent — task execution, wires read-tools + hand-tools |
+| `tools.ts` | Tool JSON Schema definitions (what the LLM sees) |
+| `read-tools.ts` | READ tool implementations (read_file, grep, glob, memory_query) |
+| `hand-tools.ts` | WRITE + EXECUTE + EXTERNAL tool implementations |
+| `chat-session.ts` | Append-only JSONL session persistence |
+| `context.ts` | Token estimation, history compaction, bootstrap file injection |
+| `message-queue.ts` | In-memory FIFO queue for incoming messages |
+| `cron.ts` | Timer-based task scheduler |
+| `tool-executor.ts` | Generic tool dispatch (name → handler) |
+
+### Key Files (cli/)
+
+| File | Responsibility |
+|------|---------------|
+| `index.ts` | CLI entry point, argv routing |
+| `config.ts` | Config type + load/save from `.jawclaw/config.json` |
+| `onboard.ts` | First-run interactive setup (provider + channel) |
+| `start.ts` | Boot: create providers, channels, Mouth, wire everything |
+| `commands/status.ts` | Show current config |
+| `commands/provider.ts` | Add/remove LLM provider |
+| `commands/channel.ts` | Add/remove channel |
+
+## Provider Abstraction
+
+All platform-specific code is isolated in `providers/`. Core agent files have zero imports from `openai`, `node:child_process`, or `node:fs/promises`.
+
+### Adding a new LLM provider
+
+1. Create `providers/my-provider.ts` implementing `LLMClient`
+2. Handle neutral `LLMMessage` ↔ provider-native format translation internally
+3. Export factory: `createMyProviderClient(apiKey, baseUrl?): LLMClient`
+4. Add to `index.ts` exports
+5. Add to `cli/start.ts` `createLLM()` switch
+6. Add to `cli/onboard.ts` and `commands/provider.ts` select options
+
+### Adding a new channel
+
+1. Create `channels/src/my-channel.ts` implementing `Channel` interface
+2. Export from `channels/src/index.ts`
+3. Add to `cli/start.ts` channel creation loop
+4. Add to `cli/commands/channel.ts` select options
+
+## .jawclaw/ Directory
+
+```
+.jawclaw/
+├── config.json          — Provider + channel config (managed by CLI)
+├── SOUL.md              — Agent personality (hand-edited)
+├── INSTRUCTIONS.md      — Agent rules (hand-edited)
+├── memory/
+│   ├── MEMORY.md        — Memory index
+│   ├── contacts/        — Per-person knowledge (agent-managed, name-slug.md)
+│   └── summaries/       — Auto-generated session summaries
+└── sessions/
+    ├── mouth.jsonl       — The single Mouth session
+    └── hand_*.jsonl      — Task execution logs
+```
+
+## Development
+
+```bash
+pnpm install             # install deps
+pnpm dev                 # run in dev mode (tsx)
+pnpm build               # compile TypeScript
+pnpm test                # run vitest
+pnpm test:watch          # watch mode
+```
+
+## PR & Release Workflow
+
+See `.claude/skills/pr-release.md` for the full PR conventions and changeset requirements.
+
+Quick summary: feature/fix PRs must include a changeset file (`pnpm changeset`).
