@@ -1,6 +1,6 @@
 import type { ChatSession } from "./chat-session.js";
 import type { MessageQueue } from "./message-queue.js";
-import type { AgentConfig } from "./types.js";
+import type { AgentConfig, ToolCall } from "./types.js";
 import type { LLMClient, LLMMessage } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import { executeTool } from "./tool-executor.js";
@@ -61,26 +61,14 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
         return {
           role: "tool",
           content: m.content,
-          tool_call_id: m.meta?.tool_call_id as string,
+          toolCallId: m.meta?.tool_call_id as string,
         };
       }
       if (m.role === "assistant" && m.meta?.tool_calls) {
-        const toolCalls = m.meta.tool_calls as Array<{
-          id: string;
-          name: string;
-          arguments: Record<string, unknown>;
-        }>;
         return {
           role: "assistant",
           content: m.content,
-          tool_calls: toolCalls.map((tc) => ({
-            id: tc.id,
-            type: "function" as const,
-            function: {
-              name: tc.name,
-              arguments: JSON.stringify(tc.arguments),
-            },
-          })),
+          toolCalls: m.meta.tool_calls as ToolCall[],
         };
       }
       // Prepend channel metadata to user messages so the LLM sees chat_id/sender

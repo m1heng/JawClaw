@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { generateId } from "./id.js";
 import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
@@ -17,6 +16,7 @@ import type {
 } from "./types.js";
 import type { LLMClient } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
+import type { Shell } from "./providers/shell.js";
 
 const MOUTH_SYSTEM_PROMPT = `You are the Mouth Agent (Jaw) of JawClaw — the conversational interface.
 
@@ -83,6 +83,7 @@ export class MouthAgent {
   private handLlm: LLMClient;
   private handServices: HandServices;
   private sendMessage: SendMessageFn;
+  private shell: Shell;
   private lastSummaryMessageCount = 0;
 
   constructor(params: {
@@ -93,10 +94,12 @@ export class MouthAgent {
     handLlm: LLMClient;
     handServices?: HandServices;
     sendMessage: SendMessageFn;
+    shell: Shell;
   }) {
     this.sessionsDir = params.sessionsDir;
     this.session = new ChatSession(
       join(params.sessionsDir, "mouth.jsonl"),
+      params.shell,
     );
     this.queue = new MessageQueue();
     this.config = {
@@ -114,6 +117,7 @@ export class MouthAgent {
     this.handLlm = params.handLlm;
     this.handServices = params.handServices ?? {};
     this.sendMessage = params.sendMessage;
+    this.shell = params.shell;
   }
 
   /**
@@ -173,12 +177,13 @@ export class MouthAgent {
     const systemPrompt = await buildSystemPrompt(
       MOUTH_SYSTEM_PROMPT,
       mouthBootstrapFiles(memRoot),
+      this.shell,
     );
     const configWithMemory = { ...this.config, systemPrompt };
 
     const tools: ToolRegistry = {
       // READ group (shared with Hand via SSOT)
-      ...createReadTools(memRoot),
+      ...createReadTools(this.shell, memRoot),
 
       // MESSAGE tool — explicit channel delivery
       message: async (args) => {
@@ -211,6 +216,7 @@ export class MouthAgent {
           config: this.handConfig,
           llm: this.handLlm,
           services: this.handServices,
+          shell: this.shell,
         });
 
         this.activeHands.set(taskId, hand);
@@ -315,7 +321,7 @@ export class MouthAgent {
       // Load persisted checkpoint (survives restarts)
       let checkpoint = this.lastSummaryMessageCount;
       try {
-        const stored = await readFile(checkpointPath, "utf-8");
+        const stored = await this.shell.readFile(checkpointPath);
         const parsed = parseInt(stored.trim(), 10);
         if (parsed > checkpoint) checkpoint = parsed;
       } catch {
@@ -328,8 +334,8 @@ export class MouthAgent {
 
       // Update counter + persist before dispatch to prevent re-triggering
       this.lastSummaryMessageCount = allMessages.length;
-      await mkdir(memRoot, { recursive: true });
-      await writeFile(checkpointPath, String(allMessages.length), "utf-8");
+      await this.shell.mkdir(memRoot);
+      await this.shell.writeFile(checkpointPath, String(allMessages.length));
 
       const today = new Date().toISOString().slice(0, 10);
       const ts = Date.now();
@@ -366,6 +372,7 @@ export class MouthAgent {
         config: this.handConfig,
         llm: this.handLlm,
         services: this.handServices,
+        shell: this.shell,
       });
 
       this.activeHands.set(taskId, hand);

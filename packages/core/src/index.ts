@@ -15,10 +15,16 @@ export type { LLMClient, LLMResponse, LLMMessage } from "./llm.js";
 export type { ToolHandler, ToolRegistry } from "./tool-executor.js";
 export type { QueueMessage } from "./message-queue.js";
 
+// Providers
+export type { Shell, ExecResult } from "./providers/shell.js";
+export { LocalShell } from "./providers/local-shell.js";
+export { createOpenAIClient } from "./providers/openai.js";
+/** @deprecated Use createOpenAIClient instead. */
+export { createOpenAIClient as createLLMClient } from "./providers/openai.js";
+
 export { ChatSession } from "./chat-session.js";
 export { MessageQueue } from "./message-queue.js";
 export { CronScheduler } from "./cron.js";
-export { createLLMClient } from "./llm.js";
 export { MouthAgent } from "./mouth-agent.js";
 export type { MessageMeta } from "./mouth-agent.js";
 export { HandAgent } from "./hand-agent.js";
@@ -26,6 +32,7 @@ export type { HandStatus } from "./hand-agent.js";
 export { runReactLoop } from "./react-loop.js";
 export { generateId } from "./id.js";
 export { createReadTools } from "./read-tools.js";
+export { createHandTools } from "./hand-tools.js";
 export { MOUTH_TOOLS, HAND_TOOLS, READ_TOOLS, MESSAGE_TOOL } from "./tools.js";
 export {
   estimateTokens,
