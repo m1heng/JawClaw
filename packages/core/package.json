@@ -1,9 +1,10 @@
 {
   "name": "@jawclaw/core",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": ["dist", "!dist/__tests__"],
   "scripts": {
     "build": "tsc --build"
   },

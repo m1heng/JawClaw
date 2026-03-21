@@ -1,18 +1,19 @@
 {
-  "name": "@jawclaw/cli",
-  "version": "0.0.1",
+  "name": "jawclaw",
+  "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "jawclaw": "dist/index.js"
   },
+  "files": ["dist", "!dist/__tests__"],
   "scripts": {
     "build": "tsc --build"
   },
   "dependencies": {
     "@clack/prompts": "^1.1.0",
-    "@jawclaw/channels": "workspace:*",
-    "@jawclaw/core": "workspace:*"
+    "@jawclaw/channels": "workspace:^",
+    "@jawclaw/core": "workspace:^"
   }
 }

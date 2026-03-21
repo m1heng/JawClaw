@@ -7,6 +7,13 @@ Dual-layer agent framework for IM-connected coding agents.
 ## Quick Start
 
 ```bash
+npm install -g jawclaw
+jawclaw
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/m1heng/JawClaw.git
 cd JawClaw
 pnpm install
