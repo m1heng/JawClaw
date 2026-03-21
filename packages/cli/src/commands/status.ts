@@ -13,10 +13,14 @@ export async function showStatus() {
   console.log();
 
   // Provider
-  const p = config.provider;
-  const baseLabel = p.baseUrl ? ` (${p.baseUrl})` : "";
-  console.log(`   Provider: ${p.type}${baseLabel}`);
-  console.log(`   Models:   ${p.mouthModel} / ${p.handModel}`);
+  if (config.provider) {
+    const pr = config.provider;
+    const baseLabel = pr.baseUrl ? ` (${pr.baseUrl})` : "";
+    console.log(`   Provider: ${pr.type}${baseLabel}`);
+    console.log(`   Models:   ${pr.mouthModel} / ${pr.handModel}`);
+  } else {
+    console.log("   Provider: (none)");
+  }
 
   // Channels
   if (config.channels.length === 0) {

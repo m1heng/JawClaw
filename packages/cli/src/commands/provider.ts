@@ -20,37 +20,56 @@ async function addProvider() {
     return;
   }
 
+  const existing = config.provider;
+
+  const providerType = await p.select({
+    message: "LLM Provider",
+    initialValue: existing?.type,
+    options: [
+      { value: "openai", label: "OpenAI" },
+      { value: "anthropic", label: "Anthropic Claude" },
+      { value: "gemini", label: "Google Gemini" },
+      { value: "openai-compatible", label: "OpenAI-compatible (custom endpoint)" },
+    ],
+  });
+  if (p.isCancel(providerType)) process.exit(0);
+
+  const needsBaseUrl = providerType === "openai-compatible";
+
   const result = await p.group(
     {
       apiKey: () =>
         p.text({
-          message: "LLM API Key",
-          placeholder: "sk-...",
-          initialValue: config.provider.apiKey,
+          message: "API Key",
+          initialValue: existing?.apiKey,
           validate: (v) => (!v || v.length < 5 ? "Key too short" : undefined),
         }),
       baseUrl: () =>
-        p.text({
-          message: "Base URL (leave empty for OpenAI)",
-          placeholder: "https://api.openai.com/v1",
-          defaultValue: config.provider.baseUrl ?? "",
-        }),
+        needsBaseUrl
+          ? p.text({
+              message: "Base URL",
+              initialValue: existing?.baseUrl ?? "",
+              validate: (v) => (!v ? "Base URL is required" : undefined),
+            })
+          : Promise.resolve(existing?.baseUrl ?? ""),
       mouthModel: () =>
         p.text({
           message: "Mouth model (fast, for chat)",
-          initialValue: config.provider.mouthModel,
+          initialValue: existing?.mouthModel,
         }),
       handModel: () =>
         p.text({
           message: "Hand model (strong, for tasks)",
-          initialValue: config.provider.handModel,
+          initialValue: existing?.handModel,
         }),
     },
     { onCancel: () => process.exit(0) },
   );
 
+  const configType = providerType === "openai-compatible" ? "openai" : (providerType as string);
+
   config.provider = {
-    type: "openai",
+    type: configType,
     apiKey: result.apiKey as string,
     baseUrl: (result.baseUrl as string) || undefined,
     mouthModel: result.mouthModel as string,
@@ -62,5 +81,25 @@ async function addProvider() {
 }
 
 async function removeProvider() {
-  console.log("Cannot remove the only provider. Use 'jawclaw provider add' to change it.");
+  const config = await loadConfig();
+  if (!config) {
+    console.log("Run jawclaw first to set up.");
+    return;
+  }
+
+  if (!config.provider) {
+    console.log("No provider configured.");
+    return;
+  }
+
+  const confirm = await p.confirm({
+    message: `Remove ${config.provider.type} provider?`,
+  });
+
+  if (p.isCancel(confirm) || !confirm) return;
+
+  config.provider = undefined;
+  await saveConfig(config);
+  console.log("✅ Provider removed. Run jawclaw to reconfigure.");
 }
+

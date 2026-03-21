@@ -1,16 +1,43 @@
-import "dotenv/config";
 import { loadConfig } from "./config.js";
 import { onboard } from "./onboard.js";
 import { startBot } from "./start.js";
 
 const [cmd, subcmd] = process.argv.slice(2);
 
+function showHelp() {
+  console.log("🐾 JawClaw — IM-connected coding agent");
+  console.log();
+  console.log("Usage: jawclaw [command]");
+  console.log();
+  console.log("Commands:");
+  console.log("  (no args)          Start bot (onboard if first run)");
+  console.log("  status             Show config and status");
+  console.log("  provider add       Add or update LLM provider");
+  console.log("  channel add        Add a channel");
+  console.log("  channel remove     Remove a channel");
+  console.log();
+  console.log("Options:");
+  console.log("  --help, -h         Show this help");
+  console.log("  --version, -v      Show version");
+}
+
 async function main() {
   switch (cmd) {
+    case "--help":
+    case "-h": {
+      showHelp();
+      break;
+    }
+
+    case "--version":
+    case "-v": {
+      console.log("jawclaw 0.0.1");
+      break;
+    }
+
     case undefined: {
-      // Default: onboard if needed, then start
       let config = await loadConfig();
-      if (!config) {
+      if (!config || !config.provider) {
         config = await onboard();
       }
       await startBot(config);
@@ -35,20 +62,10 @@ async function main() {
       break;
     }
 
-    case "stop": {
-      console.log("Use Ctrl+C to stop the running instance.");
-      break;
-    }
-
     default:
       console.log(`Unknown command: ${cmd}`);
       console.log();
-      console.log("Usage:");
-      console.log("  jawclaw              Start (onboard if first run)");
-      console.log("  jawclaw status       Show config and status");
-      console.log("  jawclaw provider add Update LLM provider");
-      console.log("  jawclaw channel add  Add a channel");
-      console.log("  jawclaw channel remove  Remove a channel");
+      showHelp();
       process.exit(1);
   }
 }

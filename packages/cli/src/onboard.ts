@@ -20,20 +20,35 @@ const DEFAULT_INSTRUCTIONS = `# Instructions
 export async function onboard(): Promise<Config> {
   p.intro("🐾 JawClaw — first time setup");
 
+  const providerType = await p.select({
+    message: "LLM Provider",
+    options: [
+      { value: "openai", label: "OpenAI" },
+      { value: "anthropic", label: "Anthropic Claude" },
+      { value: "gemini", label: "Google Gemini" },
+      { value: "openai-compatible", label: "OpenAI-compatible (custom endpoint)" },
+    ],
+  });
+  if (p.isCancel(providerType)) process.exit(0);
+
+  const needsBaseUrl = providerType === "openai-compatible";
+
   const provider = await p.group(
     {
       apiKey: () =>
         p.text({
-          message: "LLM API Key",
-          placeholder: "sk-...",
+          message: "API Key",
+          placeholder: providerType === "openai" ? "sk-..." : "...",
           validate: (v) => (!v || v.length < 5 ? "Key too short" : undefined),
         }),
       baseUrl: () =>
-        p.text({
-          message: "Base URL (leave empty for OpenAI)",
-          placeholder: "https://api.openai.com/v1",
-          defaultValue: "",
-        }),
+        needsBaseUrl
+          ? p.text({
+              message: "Base URL",
+              placeholder: "https://your-endpoint.com/v1",
+              validate: (v) => (!v ? "Base URL is required" : undefined),
+            })
+          : Promise.resolve(""),
     },
     { onCancel: () => process.exit(0) },
   );
@@ -51,13 +66,38 @@ export async function onboard(): Promise<Config> {
     { onCancel: () => process.exit(0) },
   );
 
+  const defaultModels: Record<string, { mouth: string; hand: string }> = {
+    openai: { mouth: "gpt-5.4-mini", hand: "gpt-5.4" },
+    anthropic: { mouth: "claude-sonnet-4-6", hand: "claude-opus-4-6" },
+    gemini: { mouth: "gemini-2.5-flash", hand: "gemini-2.5-pro" },
+  };
+
+  let models = defaultModels[providerType as string];
+
+  // OpenAI-compatible: ask for model names since we can't guess
+  if (!models) {
+    const customModels = await p.group(
+      {
+        mouth: () =>
+          p.text({ message: "Mouth model (fast, for chat)", placeholder: "model-name" }),
+        hand: () =>
+          p.text({ message: "Hand model (strong, for tasks)", placeholder: "model-name" }),
+      },
+      { onCancel: () => process.exit(0) },
+    );
+    models = { mouth: customModels.mouth as string, hand: customModels.hand as string };
+  }
+
+  // openai-compatible uses the openai SDK under the hood
+  const configType = providerType === "openai-compatible" ? "openai" : (providerType as string);
+
   const config: Config = {
     provider: {
-      type: "openai",
+      type: configType,
       apiKey: provider.apiKey as string,
       baseUrl: (provider.baseUrl as string) || undefined,
-      mouthModel: "gpt-4o-mini",
-      handModel: "gpt-4o",
+      mouthModel: models.mouth,
+      handModel: models.hand,
     },
     channels: [{ type: "telegram", token: channel.token as string }],
   };

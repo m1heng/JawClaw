@@ -19,6 +19,8 @@ export type { QueueMessage } from "./message-queue.js";
 export type { Shell, ExecResult } from "./providers/shell.js";
 export { LocalShell } from "./providers/local-shell.js";
 export { createOpenAIClient } from "./providers/openai.js";
+export { createGeminiClient } from "./providers/gemini.js";
+export { createAnthropicClient } from "./providers/anthropic.js";
 /** @deprecated Use createOpenAIClient instead. */
 export { createOpenAIClient as createLLMClient } from "./providers/openai.js";
 
