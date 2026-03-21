@@ -1,6 +1,4 @@
-import { exec } from "node:child_process";
-import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import type { Shell, ExecResult } from "./providers/shell.js";
 import type { ToolRegistry } from "./tool-executor.js";
 
 /** Shell-escape a string for safe interpolation. */
@@ -8,37 +6,26 @@ function esc(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
-/** Run a shell command, returning combined stdout+stderr. */
-function run(command: string): Promise<string> {
-  return new Promise((resolve) => {
-    exec(
-      command,
-      { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) {
-          resolve(
-            `exit code ${err.code ?? 1}\nstdout: ${stdout}\nstderr: ${stderr}`,
-          );
-        } else {
-          resolve(stdout + (stderr ? `\nstderr: ${stderr}` : ""));
-        }
-      },
-    );
-  });
+/** Format an ExecResult as a human-readable string. */
+function formatExec(r: ExecResult): string {
+  if (r.exitCode !== 0) {
+    return `exit code ${r.exitCode}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
+  }
+  return r.stdout + (r.stderr ? `\nstderr: ${r.stderr}` : "");
 }
 
 /**
  * Create READ group tool handlers.
  * Shared by both Mouth and Hand agents (SSOT).
  */
-export function createReadTools(memoryRoot: string): ToolRegistry {
+export function createReadTools(shell: Shell, memoryRoot: string): ToolRegistry {
   return {
     read_file: async (args) => {
       const path = args.path as string;
       const offset = args.offset as number | undefined;
       const limit = args.limit as number | undefined;
       try {
-        const content = await readFile(path, "utf-8");
+        const content = await shell.readFile(path);
         if (offset !== undefined || limit !== undefined) {
           const lines = content.split("\n");
           const start = (offset ?? 1) - 1;
@@ -59,10 +46,11 @@ export function createReadTools(memoryRoot: string): ToolRegistry {
       const searchPath = (args.path as string) ?? ".";
       const glob = args.glob as string | undefined;
       const includeFlag = glob ? `--include=${esc(glob)}` : "";
-      const result = await run(
+      const result = await shell.exec(
         `grep -rn ${includeFlag} -E ${esc(pattern)} ${esc(searchPath)} 2>/dev/null | head -100`,
+        { timeout: 30_000 },
       );
-      return result || "(no matches)";
+      return formatExec(result) || "(no matches)";
     },
 
     glob: async (args) => {
@@ -70,26 +58,25 @@ export function createReadTools(memoryRoot: string): ToolRegistry {
       const searchPath = (args.path as string) ?? ".";
       let cmd: string;
       if (pattern.includes("/")) {
-        // Path pattern: use find -path (where * matches across /)
         const findPattern = `${searchPath}/${pattern}`.replace(/\*\*/g, "*");
         cmd = `find ${esc(searchPath)} -type f -path ${esc(findPattern)} 2>/dev/null | head -200`;
       } else {
         cmd = `find ${esc(searchPath)} -type f -name ${esc(pattern)} 2>/dev/null | head -200`;
       }
-      const result = await run(cmd);
-      return result || "(no files found)";
+      const result = await shell.exec(cmd, { timeout: 30_000 });
+      return formatExec(result) || "(no files found)";
     },
 
     memory_query: async (args) => {
       const query = args.query as string;
       try {
-        const files = await collectFiles(memoryRoot);
+        const files = await shell.listFiles(memoryRoot);
         if (files.length === 0) return "(no memory files found)";
 
         const regex = new RegExp(query, "i");
         const results: string[] = [];
         for (const file of files) {
-          const content = await readFile(file, "utf-8");
+          const content = await shell.readFile(file);
           const lines = content.split("\n");
           const matches = lines
             .map((line, i) => ({ line, num: i + 1 }))
@@ -113,15 +100,4 @@ export function createReadTools(memoryRoot: string): ToolRegistry {
 
 function errMsg(tool: string, err: unknown): string {
   return `Error in ${tool}: ${err instanceof Error ? err.message : String(err)}`;
-}
-
-async function collectFiles(dir: string): Promise<string[]> {
-  try {
-    const entries = await readdir(dir, { withFileTypes: true, recursive: true });
-    return entries
-      .filter((e) => e.isFile())
-      .map((e) => join(e.parentPath ?? dir, e.name));
-  } catch {
-    return [];
-  }
 }

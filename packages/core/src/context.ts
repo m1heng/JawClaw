@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChatMessage } from "./types.js";
+import type { Shell } from "./providers/shell.js";
 
 // ── Token estimation ─────────────────────────────────────────────
 
@@ -106,6 +106,7 @@ function truncateContent(content: string, maxChars: number): string {
 export async function buildSystemPrompt(
   basePrompt: string,
   files: BootstrapFile[],
+  shell: Shell,
   opts?: { maxPerFile?: number; maxTotal?: number },
 ): Promise<string> {
   const maxPerFile = opts?.maxPerFile ?? DEFAULT_MAX_PER_FILE;
@@ -116,7 +117,7 @@ export async function buildSystemPrompt(
   for (const file of files) {
     if (remaining <= 0) break;
     try {
-      const raw = await readFile(file.path, "utf-8");
+      const raw = await shell.readFile(file.path);
       if (!raw.trim()) continue;
 
       const budget = Math.min(maxPerFile, remaining);

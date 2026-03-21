@@ -1,4 +1,5 @@
-import { MouthAgent, createLLMClient, CronScheduler } from "@jawclaw/core";
+import { MouthAgent, CronScheduler, LocalShell } from "@jawclaw/core";
+import { createOpenAIClient } from "@jawclaw/core";
 import { TelegramChannel } from "@jawclaw/channels";
 import type { HandServices } from "@jawclaw/core";
 
@@ -12,10 +13,11 @@ export async function startBot() {
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
   if (!apiKey) throw new Error("OPENAI_API_KEY is required");
 
-  const mouthLlm = createLLMClient(apiKey, baseUrl);
-  const handLlm = createLLMClient(apiKey, baseUrl);
+  const mouthLlm = createOpenAIClient(apiKey, baseUrl);
+  const handLlm = createOpenAIClient(apiKey, baseUrl);
   const channel = new TelegramChannel(token);
   const cron = new CronScheduler();
+  const shell = new LocalShell();
 
   const sessionsDir = ".jawclaw/sessions";
 
@@ -41,6 +43,7 @@ export async function startBot() {
     handLlm: handLlm,
     handServices,
     sendMessage: (chatId, text) => channel.sendReply(chatId, text),
+    shell,
   });
 
   channel.onMessage(async (msg) => {
