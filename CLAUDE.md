@@ -74,3 +74,19 @@ Tools are organized into groups to keep Mouth and Hand aligned:
 - Hand Agent can read the chat session file at any time to get more context (pull-based)
 - Multiple Hand Agents can run concurrently from the same Mouth Agent
 - All agents read/write the same shared memory files via standard file tools
+
+## Changesets (Versioning & Release)
+
+This project uses [Changesets](https://github.com/changesets/changesets) for versioning.
+All three packages (`@jawclaw/core`, `@jawclaw/channels`, `jawclaw`) share a fixed version.
+
+**When creating a PR that changes package behavior:**
+1. Run `pnpm changeset`
+2. Select the affected package(s)
+3. Choose bump type: `patch` (bug fix), `minor` (new feature), `major` (breaking)
+4. Write a short summary of the change
+5. Commit the generated `.changeset/*.md` file with your PR
+
+**Skip changeset for:** `chore:`, `ci:`, `docs:`, `test:` prefixed PRs (CI check allows these).
+
+**Release flow:** Merge to main → Changesets Action creates a "Version Packages" PR → merge that PR → auto-publish to npm.
