@@ -92,8 +92,12 @@ const DISPATCH_TOOLS: ToolDefinition[] = [
           type: "string",
           description: "Clear description of what the Hand Agent should do",
         },
+        reply_to: {
+          type: "string",
+          description: "chat_id to deliver the result to (from the user message metadata)",
+        },
       },
-      required: ["description"],
+      required: ["description", "reply_to"],
     },
   },
   {
@@ -177,6 +181,24 @@ const EXECUTE_TOOLS: ToolDefinition[] = [
 
 // ── EXTERNAL group (Hand only) ─────────────────────────────────────
 
+// ── MESSAGE tool (shared by Mouth and Hand) ─────────────────────────
+
+export const MESSAGE_TOOL: ToolDefinition = {
+  name: "message",
+  description:
+    "Send a message to a chat through the IM channel. Use this to reply to users or send to other chats.",
+  parameters: {
+    type: "object",
+    properties: {
+      chat_id: { type: "string", description: "Target chat ID" },
+      text: { type: "string", description: "Message text to send" },
+    },
+    required: ["chat_id", "text"],
+  },
+};
+
+// ── EXTERNAL group (Hand only) ─────────────────────────────────────
+
 const EXTERNAL_TOOLS: ToolDefinition[] = [
   {
     name: "web_search",
@@ -189,19 +211,7 @@ const EXTERNAL_TOOLS: ToolDefinition[] = [
       required: ["query"],
     },
   },
-  {
-    name: "message",
-    description:
-      "Send a message to a chat through the IM channel. Use this to proactively notify the user or send to other chats.",
-    parameters: {
-      type: "object",
-      properties: {
-        chat_id: { type: "string", description: "Target chat ID" },
-        text: { type: "string", description: "Message text to send" },
-      },
-      required: ["chat_id", "text"],
-    },
-  },
+  MESSAGE_TOOL,
   {
     name: "cron",
     description:
@@ -237,6 +247,7 @@ const EXTERNAL_TOOLS: ToolDefinition[] = [
 export const MOUTH_TOOLS: ToolDefinition[] = [
   ...READ_TOOLS,
   ...DISPATCH_TOOLS,
+  MESSAGE_TOOL,
 ];
 
 export const HAND_TOOLS: ToolDefinition[] = [

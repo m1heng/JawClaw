@@ -63,6 +63,7 @@ export class TelegramChannel implements Channel {
         senderName:
           ctx.from.first_name +
           (ctx.from.last_name ? ` ${ctx.from.last_name}` : ""),
+        channel: "telegram",
       });
     });
   }

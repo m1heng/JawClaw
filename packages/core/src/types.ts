@@ -14,6 +14,7 @@ export type TaskDispatch = {
   taskId: string;
   description: string;
   sourceChat: string; // file path to Mouth's .jsonl
+  replyTo?: string; // chatId to deliver result to
 };
 
 export type TaskResult = {

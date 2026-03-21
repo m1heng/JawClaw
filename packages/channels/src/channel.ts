@@ -3,6 +3,7 @@ export type ChannelMessage = {
   text: string;
   senderId: string;
   senderName?: string;
+  channel: string;
 };
 
 export interface Channel {

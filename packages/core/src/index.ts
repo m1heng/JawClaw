@@ -20,12 +20,13 @@ export { MessageQueue } from "./message-queue.js";
 export { CronScheduler } from "./cron.js";
 export { createLLMClient } from "./llm.js";
 export { MouthAgent } from "./mouth-agent.js";
+export type { MessageMeta } from "./mouth-agent.js";
 export { HandAgent } from "./hand-agent.js";
 export type { HandStatus } from "./hand-agent.js";
 export { runReactLoop } from "./react-loop.js";
 export { generateId } from "./id.js";
 export { createReadTools } from "./read-tools.js";
-export { MOUTH_TOOLS, HAND_TOOLS, READ_TOOLS } from "./tools.js";
+export { MOUTH_TOOLS, HAND_TOOLS, READ_TOOLS, MESSAGE_TOOL } from "./tools.js";
 export {
   estimateTokens,
   estimateMessageTokens,

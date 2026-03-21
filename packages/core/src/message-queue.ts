@@ -2,6 +2,12 @@ export type QueueMessage = {
   content: string;
   from: string;
   ts: string;
+  meta?: {
+    chat_id: string;
+    sender_id: string;
+    sender_name?: string;
+    channel?: string;
+  };
 };
 
 export class MessageQueue {

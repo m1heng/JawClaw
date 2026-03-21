@@ -28,7 +28,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
     // Check message queue and inject any new messages
     const queued = queue.drain();
     for (const msg of queued) {
-      const chatMsg = { ts: msg.ts, role: "user" as const, content: msg.content };
+      const chatMsg = { ts: msg.ts, role: "user" as const, content: msg.content, ...(msg.meta ? { meta: msg.meta } : {}) };
       await session.append(chatMsg);
     }
 
@@ -82,6 +82,14 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
             },
           })),
         };
+      }
+      // Prepend channel metadata to user messages so the LLM sees chat_id/sender
+      if (m.role === "user" && m.meta?.chat_id) {
+        const parts = [`[chat_id=${m.meta.chat_id}`];
+        if (m.meta.sender_name) parts.push(`sender=${m.meta.sender_name}`);
+        if (m.meta.channel) parts.push(`channel=${m.meta.channel}`);
+        const prefix = parts.join(" ") + "]\n";
+        return { role: "user", content: prefix + m.content };
       }
       return { role: m.role as "user" | "system", content: m.content };
     };
