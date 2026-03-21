@@ -2,8 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { LLMClient, LLMMessage } from "../llm.js";
 import type { ToolDefinition, ToolCall } from "../types.js";
 
-export function createAnthropicClient(apiKey: string): LLMClient {
-  const client = new Anthropic({ apiKey });
+export function createAnthropicClient(apiKey: string, baseUrl?: string): LLMClient {
+  const client = new Anthropic({ apiKey, ...(baseUrl ? { baseURL: baseUrl } : {}) });
 
   return {
     async createCompletion({ model, messages, tools }) {

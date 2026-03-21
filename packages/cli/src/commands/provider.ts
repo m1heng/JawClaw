@@ -4,12 +4,9 @@ import { loadConfig, saveConfig } from "../config.js";
 export async function handleProvider(subcmd?: string) {
   if (subcmd === "add") {
     await addProvider();
-  } else if (subcmd === "remove") {
-    await removeProvider();
   } else {
     console.log("Usage:");
     console.log("  jawclaw provider add      Add or update LLM provider");
-    console.log("  jawclaw provider remove   Remove LLM provider");
   }
 }
 
@@ -78,6 +75,3 @@ async function addProvider() {
   console.log("✅ Provider updated");
 }
 
-async function removeProvider() {
-  console.log("Cannot remove the only provider. Use 'jawclaw provider add' to change it.");
-}

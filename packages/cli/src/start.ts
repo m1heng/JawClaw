@@ -18,7 +18,7 @@ function createLLM(provider: ProviderConfig): LLMClient {
     case "gemini":
       return createGeminiClient(provider.apiKey);
     case "anthropic":
-      return createAnthropicClient(provider.apiKey);
+      return createAnthropicClient(provider.apiKey, provider.baseUrl);
     default:
       throw new Error(`Unknown provider type: ${provider.type}`);
   }
@@ -29,6 +29,21 @@ export async function startBot(config: Config) {
 
   const mouthLlm = createLLM(provider);
   const handLlm = createLLM(provider);
+
+  // Validate LLM connectivity before starting channels
+  try {
+    await mouthLlm.createCompletion({
+      model: provider.mouthModel,
+      messages: [{ role: "user", content: "ping" }],
+    });
+    console.log("✅ LLM connected");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`❌ LLM connection failed: ${msg}`);
+    console.error("   Check your API key and model name in .jawclaw/config.json");
+    process.exit(1);
+  }
+
   const cron = new CronScheduler();
   const shell = new LocalShell();
 
@@ -100,4 +115,17 @@ export async function startBot(config: Config) {
   }
 
   console.log(`🐾 JawClaw running — ${activeChannels.length} channel(s) active`);
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    console.log("\n🐾 Shutting down...");
+    cron.destroy();
+    for (const ch of activeChannels) {
+      await ch.stop().catch(() => {});
+    }
+    process.exit(0);
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
