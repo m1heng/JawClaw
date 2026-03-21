@@ -1,28 +1,34 @@
 import { MouthAgent, CronScheduler, LocalShell } from "@jawclaw/core";
 import { createOpenAIClient } from "@jawclaw/core";
 import { TelegramChannel } from "@jawclaw/channels";
+import type { Channel } from "@jawclaw/channels";
 import type { HandServices } from "@jawclaw/core";
+import type { Config } from "./config.js";
 
-export async function startBot() {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const apiKey = process.env.OPENAI_API_KEY;
-  const baseUrl = process.env.OPENAI_BASE_URL;
-  const mouthModel = process.env.MOUTH_MODEL ?? "gpt-4o-mini";
-  const handModel = process.env.HAND_MODEL ?? "gpt-4o";
+export async function startBot(config: Config) {
+  const { provider, channels: channelConfigs } = config;
 
-  if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
-  if (!apiKey) throw new Error("OPENAI_API_KEY is required");
-
-  const mouthLlm = createOpenAIClient(apiKey, baseUrl);
-  const handLlm = createOpenAIClient(apiKey, baseUrl);
-  const channel = new TelegramChannel(token);
+  const mouthLlm = createOpenAIClient(provider.apiKey, provider.baseUrl);
+  const handLlm = createOpenAIClient(provider.apiKey, provider.baseUrl);
   const cron = new CronScheduler();
   const shell = new LocalShell();
 
   const sessionsDir = ".jawclaw/sessions";
 
+  // Multi-channel router: chatId → channel instance
+  const channelRouter = new Map<string, Channel>();
+
+  const sendMessage = async (chatId: string, text: string) => {
+    const ch = channelRouter.get(chatId);
+    if (ch) {
+      await ch.sendReply(chatId, text);
+    } else {
+      console.error(`[router] No channel for chatId ${chatId}`);
+    }
+  };
+
   const handServices: HandServices = {
-    sendMessage: (chatId, text) => channel.sendReply(chatId, text),
+    sendMessage,
     cronSchedule: (description, cronExpr, chatId) =>
       cron.schedule(description, cronExpr, async (desc) => {
         await mouth.handleMessage(
@@ -37,24 +43,42 @@ export async function startBot() {
 
   const mouth = new MouthAgent({
     sessionsDir,
-    config: { model: mouthModel, apiKey, baseUrl },
+    config: { model: provider.mouthModel, apiKey: provider.apiKey, baseUrl: provider.baseUrl },
     llm: mouthLlm,
-    handConfig: { model: handModel, apiKey, baseUrl },
+    handConfig: { model: provider.handModel, apiKey: provider.apiKey, baseUrl: provider.baseUrl },
     handLlm: handLlm,
     handServices,
-    sendMessage: (chatId, text) => channel.sendReply(chatId, text),
+    sendMessage,
     shell,
   });
 
-  channel.onMessage(async (msg) => {
-    await channel.sendTyping(msg.chatId);
-    await mouth.handleMessage(msg.text, {
-      chatId: msg.chatId,
-      senderId: msg.senderId,
-      senderName: msg.senderName,
-      channel: msg.channel,
-    });
-  });
+  // Start all configured channels
+  const activeChannels: Channel[] = [];
 
-  await channel.start();
+  for (const cc of channelConfigs) {
+    if (cc.type === "telegram") {
+      const tg = new TelegramChannel(cc.token);
+
+      tg.onMessage(async (msg) => {
+        channelRouter.set(msg.chatId, tg);
+        await tg.sendTyping(msg.chatId);
+        await mouth.handleMessage(msg.text, {
+          chatId: msg.chatId,
+          senderId: msg.senderId,
+          senderName: msg.senderName,
+          channel: msg.channel,
+        });
+      });
+
+      await tg.start();
+      activeChannels.push(tg);
+    }
+  }
+
+  if (activeChannels.length === 0) {
+    console.error("No channels configured. Run: jawclaw channel add");
+    process.exit(1);
+  }
+
+  console.log(`🐾 JawClaw running — ${activeChannels.length} channel(s) active`);
 }
