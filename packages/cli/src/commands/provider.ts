@@ -24,12 +24,15 @@ async function addProvider() {
     message: "LLM Provider",
     initialValue: config.provider.type,
     options: [
-      { value: "openai", label: "OpenAI (or compatible)" },
+      { value: "openai", label: "OpenAI" },
       { value: "anthropic", label: "Anthropic Claude" },
       { value: "gemini", label: "Google Gemini" },
+      { value: "openai-compatible", label: "OpenAI-compatible (custom endpoint)" },
     ],
   });
   if (p.isCancel(providerType)) process.exit(0);
+
+  const needsBaseUrl = providerType === "openai-compatible";
 
   const result = await p.group(
     {
@@ -40,12 +43,13 @@ async function addProvider() {
           validate: (v) => (!v || v.length < 5 ? "Key too short" : undefined),
         }),
       baseUrl: () =>
-        providerType === "openai"
+        needsBaseUrl
           ? p.text({
-              message: "Base URL (leave empty for OpenAI)",
-              defaultValue: config.provider.baseUrl ?? "",
+              message: "Base URL",
+              initialValue: config.provider.baseUrl ?? "",
+              validate: (v) => (!v ? "Base URL is required" : undefined),
             })
-          : Promise.resolve(""),
+          : Promise.resolve(config.provider.baseUrl ?? ""),
       mouthModel: () =>
         p.text({
           message: "Mouth model (fast, for chat)",
@@ -60,8 +64,10 @@ async function addProvider() {
     { onCancel: () => process.exit(0) },
   );
 
+  const configType = providerType === "openai-compatible" ? "openai" : (providerType as string);
+
   config.provider = {
-    type: providerType as string,
+    type: configType,
     apiKey: result.apiKey as string,
     baseUrl: (result.baseUrl as string) || undefined,
     mouthModel: result.mouthModel as string,
