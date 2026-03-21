@@ -37,7 +37,7 @@ async function main() {
 
     case undefined: {
       let config = await loadConfig();
-      if (!config) {
+      if (!config || !config.provider) {
         config = await onboard();
       }
       await startBot(config);

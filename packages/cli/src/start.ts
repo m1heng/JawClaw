@@ -27,6 +27,11 @@ function createLLM(provider: ProviderConfig): LLMClient {
 export async function startBot(config: Config) {
   const { provider, channels: channelConfigs } = config;
 
+  if (!provider) {
+    console.error("No LLM provider configured. Run: jawclaw provider add");
+    process.exit(1);
+  }
+
   const mouthLlm = createLLM(provider);
   const handLlm = createLLM(provider);
 

@@ -17,7 +17,7 @@ export type ChannelConfig = {
 };
 
 export type Config = {
-  provider: ProviderConfig;
+  provider?: ProviderConfig;
   channels: ChannelConfig[];
 };
 

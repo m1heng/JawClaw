@@ -40,8 +40,8 @@ describe("config", () => {
     const loaded = await loadConfig();
 
     expect(loaded).not.toBeNull();
-    expect(loaded!.provider.apiKey).toBe("sk-test");
-    expect(loaded!.provider.mouthModel).toBe("gpt-5.4-mini");
+    expect(loaded!.provider!.apiKey).toBe("sk-test");
+    expect(loaded!.provider!.mouthModel).toBe("gpt-5.4-mini");
     expect(loaded!.channels).toHaveLength(1);
     expect(loaded!.channels[0].type).toBe("telegram");
   });
@@ -68,8 +68,8 @@ describe("config", () => {
     });
 
     const loaded = await loadConfig();
-    expect(loaded!.provider.type).toBe("anthropic");
-    expect(loaded!.provider.apiKey).toBe("new");
+    expect(loaded!.provider!.type).toBe("anthropic");
+    expect(loaded!.provider!.apiKey).toBe("new");
     expect(loaded!.channels).toHaveLength(1);
   });
 });

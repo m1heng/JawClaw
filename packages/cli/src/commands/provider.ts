@@ -4,9 +4,12 @@ import { loadConfig, saveConfig } from "../config.js";
 export async function handleProvider(subcmd?: string) {
   if (subcmd === "add") {
     await addProvider();
+  } else if (subcmd === "remove") {
+    await removeProvider();
   } else {
     console.log("Usage:");
     console.log("  jawclaw provider add      Add or update LLM provider");
+    console.log("  jawclaw provider remove   Remove LLM provider");
   }
 }
 
@@ -17,9 +20,11 @@ async function addProvider() {
     return;
   }
 
+  const existing = config.provider;
+
   const providerType = await p.select({
     message: "LLM Provider",
-    initialValue: config.provider.type,
+    initialValue: existing?.type,
     options: [
       { value: "openai", label: "OpenAI" },
       { value: "anthropic", label: "Anthropic Claude" },
@@ -36,26 +41,26 @@ async function addProvider() {
       apiKey: () =>
         p.text({
           message: "API Key",
-          initialValue: config.provider.apiKey,
+          initialValue: existing?.apiKey,
           validate: (v) => (!v || v.length < 5 ? "Key too short" : undefined),
         }),
       baseUrl: () =>
         needsBaseUrl
           ? p.text({
               message: "Base URL",
-              initialValue: config.provider.baseUrl ?? "",
+              initialValue: existing?.baseUrl ?? "",
               validate: (v) => (!v ? "Base URL is required" : undefined),
             })
-          : Promise.resolve(config.provider.baseUrl ?? ""),
+          : Promise.resolve(existing?.baseUrl ?? ""),
       mouthModel: () =>
         p.text({
           message: "Mouth model (fast, for chat)",
-          initialValue: config.provider.mouthModel,
+          initialValue: existing?.mouthModel,
         }),
       handModel: () =>
         p.text({
           message: "Hand model (strong, for tasks)",
-          initialValue: config.provider.handModel,
+          initialValue: existing?.handModel,
         }),
     },
     { onCancel: () => process.exit(0) },
@@ -73,5 +78,28 @@ async function addProvider() {
 
   await saveConfig(config);
   console.log("✅ Provider updated");
+}
+
+async function removeProvider() {
+  const config = await loadConfig();
+  if (!config) {
+    console.log("Run jawclaw first to set up.");
+    return;
+  }
+
+  if (!config.provider) {
+    console.log("No provider configured.");
+    return;
+  }
+
+  const confirm = await p.confirm({
+    message: `Remove ${config.provider.type} provider?`,
+  });
+
+  if (p.isCancel(confirm) || !confirm) return;
+
+  config.provider = undefined;
+  await saveConfig(config);
+  console.log("✅ Provider removed. Run jawclaw to reconfigure.");
 }
 
