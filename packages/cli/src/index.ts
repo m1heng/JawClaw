@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { loadConfig } from "./config.js";
 import { onboard } from "./onboard.js";
 import { startBot } from "./start.js";

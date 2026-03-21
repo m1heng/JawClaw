@@ -1,14 +1,15 @@
 {
   "name": "@jawclaw/channels",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": ["dist"],
   "scripts": {
     "build": "tsc --build"
   },
   "dependencies": {
     "grammy": "^1.0.0",
-    "@jawclaw/core": "workspace:*"
+    "@jawclaw/core": "workspace:^"
   }
 }
