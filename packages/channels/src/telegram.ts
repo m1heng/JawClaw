@@ -1,49 +1,8 @@
 import { Bot } from "grammy";
 import type { Channel, ChannelMessage } from "./channel.js";
+import { chunkText } from "./channel.js";
 
 const TG_TEXT_LIMIT = 4096;
-
-/** Split text into chunks that fit within a char limit, preferring paragraph breaks. */
-function chunkText(text: string, limit: number): string[] {
-  if (text.length <= limit) return [text];
-
-  const chunks: string[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= limit) {
-      chunks.push(remaining);
-      break;
-    }
-
-    // Find the best break point within the limit
-    let breakAt = -1;
-
-    // Prefer double newline (paragraph break)
-    const paraIdx = remaining.lastIndexOf("\n\n", limit);
-    if (paraIdx > limit * 0.3) {
-      breakAt = paraIdx;
-    }
-
-    // Fallback: single newline
-    if (breakAt === -1) {
-      const nlIdx = remaining.lastIndexOf("\n", limit);
-      if (nlIdx > limit * 0.3) {
-        breakAt = nlIdx;
-      }
-    }
-
-    // Last resort: hard break at limit
-    if (breakAt === -1) {
-      breakAt = limit;
-    }
-
-    chunks.push(remaining.slice(0, breakAt));
-    remaining = remaining.slice(breakAt).replace(/^\n+/, "");
-  }
-
-  return chunks;
-}
 
 export class TelegramChannel implements Channel {
   private bot: Bot;

@@ -53,18 +53,53 @@ export async function onboard(): Promise<Config> {
     { onCancel: () => process.exit(0) },
   );
 
-  const channel = await p.group(
-    {
-      token: () =>
-        p.text({
-          message: "Telegram Bot Token",
-          placeholder: "123456:ABC-DEF...",
-          validate: (v) =>
-            v?.includes(":") ? undefined : "Should contain ':'",
-        }),
-    },
-    { onCancel: () => process.exit(0) },
-  );
+  const channelType = await p.select({
+    message: "Channel type",
+    options: [
+      { value: "telegram", label: "Telegram" },
+      { value: "weixin", label: "WeChat (微信)" },
+      { value: "feishu", label: "Feishu (飞书)" },
+    ],
+  });
+  if (p.isCancel(channelType)) process.exit(0);
+
+  let channel: { token: string; appSecret?: string };
+
+  if (channelType === "feishu") {
+    const creds = await p.group(
+      {
+        appId: () =>
+          p.text({
+            message: "Feishu App ID",
+            placeholder: "cli_xxxx",
+            validate: (v) => (!v ? "Required" : undefined),
+          }),
+        appSecret: () =>
+          p.text({
+            message: "Feishu App Secret",
+            placeholder: "xxxx",
+            validate: (v) => (!v ? "Required" : undefined),
+          }),
+      },
+      { onCancel: () => process.exit(0) },
+    );
+    channel = { token: creds.appId as string, appSecret: creds.appSecret as string };
+  } else {
+    const placeholder =
+      channelType === "telegram" ? "123456:ABC-DEF..." : "iLink bot token";
+    const token = await p.group(
+      {
+        token: () =>
+          p.text({
+            message: "Bot Token",
+            placeholder,
+            validate: (v) => (!v ? "Required" : undefined),
+          }),
+      },
+      { onCancel: () => process.exit(0) },
+    );
+    channel = { token: token.token as string };
+  }
 
   const defaultModels: Record<string, { mouth: string; hand: string }> = {
     openai: { mouth: "gpt-5.4-mini", hand: "gpt-5.4" },
@@ -99,7 +134,11 @@ export async function onboard(): Promise<Config> {
       mouthModel: models.mouth,
       handModel: models.hand,
     },
-    channels: [{ type: "telegram", token: channel.token as string }],
+    channels: [{
+      type: channelType as string,
+      token: channel.token,
+      ...(channel.appSecret ? { appSecret: channel.appSecret } : {}),
+    }],
   };
 
   // Save config
