@@ -56,12 +56,13 @@ export function createReadTools(shell: Shell, memoryRoot: string): ToolRegistry 
     glob: async (args) => {
       const pattern = args.pattern as string;
       const searchPath = (args.path as string) ?? ".";
+      const prune = `-not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/dist/*'`;
       let cmd: string;
       if (pattern.includes("/")) {
         const findPattern = `${searchPath}/${pattern}`.replace(/\*\*/g, "*");
-        cmd = `find ${esc(searchPath)} -type f -path ${esc(findPattern)} 2>/dev/null | head -200`;
+        cmd = `find ${esc(searchPath)} ${prune} -type f -path ${esc(findPattern)} 2>/dev/null | head -200`;
       } else {
-        cmd = `find ${esc(searchPath)} -type f -name ${esc(pattern)} 2>/dev/null | head -200`;
+        cmd = `find ${esc(searchPath)} ${prune} -type f -name ${esc(pattern)} 2>/dev/null | head -200`;
       }
       const result = await shell.exec(cmd, { timeout: 30_000 });
       return formatExec(result) || "(no files found)";

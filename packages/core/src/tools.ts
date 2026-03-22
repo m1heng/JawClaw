@@ -84,7 +84,7 @@ const DISPATCH_TOOLS: ToolDefinition[] = [
   {
     name: "dispatch_task",
     description:
-      "Dispatch a task to a Hand Agent for execution. Use this for any task that requires writing files, running commands, or doing real work.",
+      "Dispatch a task to a Hand Agent for execution. Use this for ANY task that requires more than one round of tool calls — including multi-file reading, code review, searching, writing, running commands, or any real work. When in doubt, dispatch.",
     parameters: {
       type: "object",
       properties: {
