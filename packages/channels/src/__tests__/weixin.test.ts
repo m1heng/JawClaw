@@ -17,6 +17,11 @@ function makeWxMsg(
   };
 }
 
+const emptyRes = () => ({
+  ok: true,
+  json: async () => ({ ret: 0, msgs: [], get_updates_buf: "init" }),
+});
+
 describe("WeixinChannel", () => {
   let channel: WeixinChannel;
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -38,12 +43,13 @@ describe("WeixinChannel", () => {
 
   describe("message handling", () => {
     it("delivers text messages to handler", async () => {
-      // First call: getUpdates returns one message, then stop polling
+      // Call 1: validation in start(), Call 2: poll with message, Call 3: stop
       let callCount = 0;
       fetchMock.mockImplementation(async (url: string) => {
         if (url.includes("getupdates")) {
           callCount++;
-          if (callCount === 1) {
+          if (callCount === 1) return emptyRes();
+          if (callCount === 2) {
             return {
               ok: true,
               json: async () => ({
@@ -53,18 +59,13 @@ describe("WeixinChannel", () => {
               }),
             };
           }
-          // Second call: stop the channel to exit poll loop
           await channel.stop();
-          return {
-            ok: true,
-            json: async () => ({ ret: 0, msgs: [], get_updates_buf: "buf1" }),
-          };
+          return emptyRes();
         }
         return { ok: true, json: async () => ({}) };
       });
 
       await channel.start();
-      // Wait for poll loop to process
       await vi.waitFor(() => expect(received).toHaveLength(1));
 
       expect(received[0].chatId).toBe("user1");
@@ -78,7 +79,8 @@ describe("WeixinChannel", () => {
       fetchMock.mockImplementation(async (url: string) => {
         if (url.includes("getupdates")) {
           callCount++;
-          if (callCount === 1) {
+          if (callCount === 1) return emptyRes();
+          if (callCount === 2) {
             return {
               ok: true,
               json: async () => ({
@@ -89,13 +91,12 @@ describe("WeixinChannel", () => {
             };
           }
           await channel.stop();
-          return { ok: true, json: async () => ({ ret: 0, msgs: [] }) };
+          return emptyRes();
         }
         return { ok: true, json: async () => ({}) };
       });
 
       await channel.start();
-      // Give time for poll iteration
       await new Promise((r) => setTimeout(r, 50));
 
       expect(received).toHaveLength(0);
@@ -114,7 +115,8 @@ describe("WeixinChannel", () => {
       fetchMock.mockImplementation(async (url: string) => {
         if (url.includes("getupdates")) {
           callCount++;
-          if (callCount === 1) {
+          if (callCount === 1) return emptyRes();
+          if (callCount === 2) {
             return {
               ok: true,
               json: async () => ({
@@ -125,7 +127,7 @@ describe("WeixinChannel", () => {
             };
           }
           await channel.stop();
-          return { ok: true, json: async () => ({ ret: 0, msgs: [] }) };
+          return emptyRes();
         }
         return { ok: true, json: async () => ({}) };
       });
@@ -149,7 +151,8 @@ describe("WeixinChannel", () => {
       fetchMock.mockImplementation(async (url: string) => {
         if (url.includes("getupdates")) {
           callCount++;
-          if (callCount === 1) {
+          if (callCount === 1) return emptyRes();
+          if (callCount === 2) {
             return {
               ok: true,
               json: async () => ({
@@ -160,7 +163,7 @@ describe("WeixinChannel", () => {
             };
           }
           await channel.stop();
-          return { ok: true, json: async () => ({ ret: 0, msgs: [] }) };
+          return emptyRes();
         }
         return { ok: true, json: async () => ({}) };
       });
@@ -174,12 +177,12 @@ describe("WeixinChannel", () => {
 
   describe("sendReply", () => {
     it("sends message with stored context_token", async () => {
-      // Simulate receiving a message first to store context_token
       let callCount = 0;
       fetchMock.mockImplementation(async (url: string) => {
         if (url.includes("getupdates")) {
           callCount++;
-          if (callCount === 1) {
+          if (callCount === 1) return emptyRes();
+          if (callCount === 2) {
             return {
               ok: true,
               json: async () => ({
@@ -190,7 +193,7 @@ describe("WeixinChannel", () => {
             };
           }
           await channel.stop();
-          return { ok: true, json: async () => ({ ret: 0, msgs: [] }) };
+          return emptyRes();
         }
         if (url.includes("sendmessage")) {
           return { ok: true, json: async () => ({ ret: 0 }) };
@@ -201,10 +204,8 @@ describe("WeixinChannel", () => {
       await channel.start();
       await vi.waitFor(() => expect(received).toHaveLength(1));
 
-      // Now send a reply
       await channel.sendReply("user1", "reply text");
 
-      // Find the sendmessage call
       const sendCall = fetchMock.mock.calls.find(
         (c: unknown[]) => (c[0] as string).includes("sendmessage"),
       );
@@ -224,21 +225,20 @@ describe("WeixinChannel", () => {
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining("No context_token"),
       );
-      // No fetch call for sendmessage
       expect(fetchMock).not.toHaveBeenCalled();
 
       errorSpy.mockRestore();
     });
 
     it("chunks long text", async () => {
-      // Receive message to store context_token
       let callCount = 0;
       const sendBodies: unknown[] = [];
 
       fetchMock.mockImplementation(async (url: string, opts?: { body?: string }) => {
         if (url.includes("getupdates")) {
           callCount++;
-          if (callCount === 1) {
+          if (callCount === 1) return emptyRes();
+          if (callCount === 2) {
             return {
               ok: true,
               json: async () => ({
@@ -249,7 +249,7 @@ describe("WeixinChannel", () => {
             };
           }
           await channel.stop();
-          return { ok: true, json: async () => ({ ret: 0, msgs: [] }) };
+          return emptyRes();
         }
         if (url.includes("sendmessage")) {
           if (opts?.body) sendBodies.push(JSON.parse(opts.body));
@@ -261,7 +261,6 @@ describe("WeixinChannel", () => {
       await channel.start();
       await vi.waitFor(() => expect(received).toHaveLength(1));
 
-      // Send text longer than WX_TEXT_LIMIT (2000)
       const longText = "a".repeat(2500);
       await channel.sendReply("user1", longText);
 
@@ -276,26 +275,30 @@ describe("WeixinChannel", () => {
     });
   });
 
-  describe("API headers", () => {
-    it("sends correct auth headers", async () => {
-      let callCount = 0;
-      fetchMock.mockImplementation(async (url: string) => {
-        if (url.includes("getupdates")) {
-          callCount++;
-          if (callCount === 1) {
-            return {
-              ok: true,
-              json: async () => ({ ret: 0, msgs: [], get_updates_buf: "b" }),
-            };
-          }
-          await channel.stop();
-          return { ok: true, json: async () => ({ ret: 0, msgs: [] }) };
-        }
-        return { ok: true, json: async () => ({}) };
-      });
+  describe("start", () => {
+    it("validates connectivity before polling", async () => {
+      fetchMock.mockImplementation(async () => emptyRes());
 
       await channel.start();
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      await channel.stop();
+
+      // First call is the validation call from start()
+      expect(fetchMock).toHaveBeenCalled();
+      const firstUrl = fetchMock.mock.calls[0][0] as string;
+      expect(firstUrl).toContain("getupdates");
+    });
+
+    it("throws on invalid token", async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 401 });
+
+      await expect(channel.start()).rejects.toThrow("HTTP 401");
+    });
+
+    it("sends correct auth headers", async () => {
+      fetchMock.mockImplementation(async () => emptyRes());
+
+      await channel.start();
+      await channel.stop();
 
       const headers = (fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers;
       expect(headers.Authorization).toBe("Bearer test-token");

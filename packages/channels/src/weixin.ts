@@ -34,6 +34,21 @@ export class WeixinChannel implements Channel {
 
   async start(): Promise<void> {
     console.log("WeChat bot starting (long-poll)...");
+
+    // Validate connectivity with a single getUpdates call before going async
+    const res = await fetch(`${this.baseUrl}/ilink/bot/getupdates`, {
+      method: "POST",
+      headers: this.headers,
+      body: JSON.stringify({ get_updates_buf: "" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      throw new Error(`WeChat API returned HTTP ${res.status} — check your token`);
+    }
+    const data = (await res.json()) as { get_updates_buf?: string };
+    if (data.get_updates_buf) this.syncBuf = data.get_updates_buf;
+    console.log("WeChat bot connected.");
+
     this.running = true;
     this.pollLoop();
   }

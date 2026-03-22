@@ -54,15 +54,20 @@ export async function startBot(config: Config) {
 
   const sessionsDir = ".jawclaw/sessions";
 
-  // Multi-channel router: chatId → channel instance
+  // Multi-channel router: "channel:chatId" → channel instance
+  // Keyed by channel name + chatId to avoid cross-channel ID collisions.
   const channelRouter = new Map<string, Channel>();
 
-  const sendMessage = async (chatId: string, text: string) => {
-    const ch = channelRouter.get(chatId);
+  const routerKey = (channel: string, chatId: string) => `${channel}:${chatId}`;
+
+  const sendMessage = async (compositeId: string, text: string) => {
+    const ch = channelRouter.get(compositeId);
     if (ch) {
+      // Extract original chatId (strip "channel:" prefix)
+      const chatId = compositeId.substring(compositeId.indexOf(":") + 1);
       await ch.sendReply(chatId, text);
     } else {
-      console.error(`[router] No channel for chatId ${chatId}`);
+      console.error(`[router] No channel for chatId ${compositeId}`);
     }
   };
 
@@ -109,10 +114,11 @@ export async function startBot(config: Config) {
 
     const channel = ch;
     channel.onMessage(async (msg) => {
-      channelRouter.set(msg.chatId, channel);
+      const compositeId = routerKey(msg.channel, msg.chatId);
+      channelRouter.set(compositeId, channel);
       await channel.sendTyping(msg.chatId);
       await mouth.handleMessage(msg.text, {
-        chatId: msg.chatId,
+        chatId: compositeId,
         senderId: msg.senderId,
         senderName: msg.senderName,
         channel: msg.channel,
