@@ -36,6 +36,13 @@ DISPATCH RULE — this is critical:
 - Examples of what to dispatch: "look at the code", "review X", "explain the architecture", "find the bug", "analyze Y"
 - Examples of what to handle directly: "hello", "what can you do", "what's your name", a quick factual question from memory
 
+HAND AGENT RESULTS:
+- When a Hand Agent completes, its result appears as a message from sender "Hand Agent" (channel=internal).
+- The message metadata contains the chat_id of the user who requested the task.
+- You MUST process the result and send a response to the user using the \`message\` tool with that chat_id.
+- Summarize or reformat as appropriate for the conversation context. Do not just echo the raw result.
+- If the task failed, let the user know clearly and suggest next steps.
+
 IMPORTANT:
 - Your text output is internal reasoning — it is NOT delivered to any channel.
 - You MUST use the \`message\` tool every time you want a user to see something.
@@ -55,13 +62,14 @@ Tools available:
 - Read: read_file, grep, glob
 - Write: write_file, edit_file
 - Execute: run_command
-- External: web_search, message (send to IM channels), cron (schedule/list/delete tasks)
+- External: web_search, message (send urgent updates to IM channels), cron (schedule/list/delete tasks)
 - Memory: memory_query (search shared memory), write_file to .jawclaw/memory/ for persistence
 
 Rules:
 - Stay focused on your assigned task
 - Be thorough but efficient
-- Your final message will be shown directly to the user, so make it clear and useful`;
+- Your text output is a work report for the Mouth Agent, not shown directly to the user. Be factual and structured.
+- Use the \`message\` tool only for urgent progress updates (e.g., "this will take a while"). Your final result goes through Mouth automatically.`;
 
 /** Max messages to batch-drain per react loop cycle. */
 const MAX_BATCH = 5;
@@ -82,6 +90,7 @@ export class MouthAgent {
   readonly queue: MessageQueue;
   private activeHands: Map<string, HandAgent> = new Map();
   private loopRunning = false;
+  private pendingHandResults = false;
   private sessionsDir: string;
   private config: AgentConfig;
   private llm: LLMClient;
@@ -157,7 +166,8 @@ export class MouthAgent {
    * accumulate in the queue and get drained in the next iteration.
    */
   private async drainLoop(): Promise<void> {
-    while (this.queue.length > 0) {
+    while (this.queue.length > 0 || this.pendingHandResults) {
+      this.pendingHandResults = false;
       const batch = this.queue.drain(MAX_BATCH);
 
       for (const msg of batch) {
@@ -280,36 +290,38 @@ export class MouthAgent {
   private async onHandComplete(
     result: TaskResult & { replyTo?: string },
   ): Promise<void> {
-    // Cancelled tasks: record in session but don't notify user
+    // Cancelled tasks: record in session but don't trigger Mouth processing
     if (result.error === "Task was cancelled.") {
       await this.session.append({
         ts: new Date().toISOString(),
-        role: "system",
+        role: "user",
         content: `[Hand Agent task ${result.taskId} was cancelled]`,
+        meta: { chat_id: result.replyTo ?? "", sender_id: "hand", sender_name: "Hand Agent", channel: "internal" },
       });
       return;
     }
 
-    const message =
+    const summary =
       result.status === "completed"
         ? result.summary
         : `Task failed: ${result.error ?? "unknown error"}`;
 
+    // Append directly to session (not queue — avoids react-loop drain race).
+    // Uses role "user" so all LLM providers see it (Anthropic/Gemini drop mid-session system messages).
     await this.session.append({
       ts: new Date().toISOString(),
-      role: "system",
-      content: `[Hand Agent completed task ${result.taskId}]\n${message}`,
+      role: "user",
+      content: `[Hand Agent completed task ${result.taskId}]\n${summary}`,
+      meta: { chat_id: result.replyTo ?? "", sender_id: "hand", sender_name: "Hand Agent", channel: "internal" },
     });
 
-    if (result.replyTo) {
-      try {
-        await this.sendMessage(result.replyTo, message);
-      } catch (err) {
-        console.error(
-          `[mouth] Failed to send Hand result to ${result.replyTo}:`,
-          err,
-        );
-      }
+    // Trigger Mouth to process the result
+    this.pendingHandResults = true;
+    if (!this.loopRunning) {
+      this.loopRunning = true;
+      this.drainLoop().finally(() => {
+        this.loopRunning = false;
+      });
     }
   }
 
