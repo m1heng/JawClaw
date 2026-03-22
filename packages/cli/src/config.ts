@@ -12,8 +12,9 @@ export type ProviderConfig = {
 };
 
 export type ChannelConfig = {
-  type: string; // "telegram" for now
+  type: string; // "telegram" | "weixin" | "feishu"
   token: string;
+  appSecret?: string; // Feishu only (token holds appId)
 };
 
 export type Config = {

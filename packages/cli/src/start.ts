@@ -7,7 +7,7 @@ import {
   createAnthropicClient,
 } from "@jawclaw/core";
 import type { LLMClient, HandServices } from "@jawclaw/core";
-import { TelegramChannel } from "@jawclaw/channels";
+import { TelegramChannel, WeixinChannel, FeishuChannel } from "@jawclaw/channels";
 import type { Channel } from "@jawclaw/channels";
 import type { Config, ProviderConfig } from "./config.js";
 
@@ -95,23 +95,32 @@ export async function startBot(config: Config) {
   const activeChannels: Channel[] = [];
 
   for (const cc of channelConfigs) {
+    let ch: Channel | null = null;
+
     if (cc.type === "telegram") {
-      const tg = new TelegramChannel(cc.token);
-
-      tg.onMessage(async (msg) => {
-        channelRouter.set(msg.chatId, tg);
-        await tg.sendTyping(msg.chatId);
-        await mouth.handleMessage(msg.text, {
-          chatId: msg.chatId,
-          senderId: msg.senderId,
-          senderName: msg.senderName,
-          channel: msg.channel,
-        });
-      });
-
-      await tg.start();
-      activeChannels.push(tg);
+      ch = new TelegramChannel(cc.token);
+    } else if (cc.type === "weixin") {
+      ch = new WeixinChannel(cc.token);
+    } else if (cc.type === "feishu") {
+      ch = new FeishuChannel(cc.token, cc.appSecret!);
     }
+
+    if (!ch) continue;
+
+    const channel = ch;
+    channel.onMessage(async (msg) => {
+      channelRouter.set(msg.chatId, channel);
+      await channel.sendTyping(msg.chatId);
+      await mouth.handleMessage(msg.text, {
+        chatId: msg.chatId,
+        senderId: msg.senderId,
+        senderName: msg.senderName,
+        channel: msg.channel,
+      });
+    });
+
+    await channel.start();
+    activeChannels.push(channel);
   }
 
   if (activeChannels.length === 0) {
