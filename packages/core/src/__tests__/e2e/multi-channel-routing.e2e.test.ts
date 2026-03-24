@@ -6,7 +6,7 @@ import { MockShell } from "../fixtures/mock-shell.js";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const BASE_URL =
   process.env.GITHUB_MODELS_ENDPOINT ?? "https://models.inference.ai.azure.com";
-const MODEL = process.env.GITHUB_MODELS_MODEL ?? "openai/gpt-4.1-mini";
+const MODEL = process.env.GITHUB_MODELS_MODEL ?? "gpt-4.1-mini";
 
 /** Poll until predicate returns true, or throw on timeout. */
 async function waitFor(
