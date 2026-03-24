@@ -17,9 +17,23 @@ export type ChannelConfig = {
   appSecret?: string; // Feishu only (token holds appId)
 };
 
+export type HandRuntimeConfig = {
+  type: "builtin" | "cli";
+  /** CLI runtime: preset name. */
+  preset?: "claude-code" | "codex" | "aider";
+  /** CLI runtime: custom command (overrides preset). */
+  command?: string;
+  /** CLI runtime: timeout in ms. */
+  timeout?: number;
+  /** CLI runtime: extra env vars. */
+  env?: Record<string, string>;
+};
+
 export type Config = {
   provider?: ProviderConfig;
   channels: ChannelConfig[];
+  /** Hand runtime config. Default: { type: "builtin" }. */
+  hand?: HandRuntimeConfig;
 };
 
 export async function loadConfig(): Promise<Config | null> {

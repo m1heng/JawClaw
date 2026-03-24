@@ -13,7 +13,7 @@ export type ReactLoopParams = {
   llm: LLMClient;
   tools: ToolRegistry;
   onAssistantMessage?: (content: string) => void;
-  onTurn?: () => void;
+  onTurn?: () => void | Promise<void>;
   abortSignal?: AbortSignal;
 };
 
@@ -23,7 +23,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
 
   for (let turn = 0; turn < maxTurns; turn++) {
     if (abortSignal?.aborted) break;
-    onTurn?.();
+    await onTurn?.();
 
     // Check message queue and inject any new messages
     const queued = queue.drain();
