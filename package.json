@@ -11,6 +11,7 @@
     "dev": "tsx packages/cli/src/index.ts",
     "clean": "rm -rf packages/*/dist",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:watch": "vitest",
     "changeset": "changeset",
     "version": "changeset version",
