@@ -20,6 +20,8 @@ export class LocalRuntime implements HandRuntime {
     (result: TaskResult & { replyTo?: string }) => Promise<void>
   > = [];
   private abortControllers = new Map<string, AbortController>();
+  /** Tasks that have reached a terminal state — guards against stale onProgress writes. */
+  private settled = new Set<string>();
 
   private checkpointStore?: CheckpointStore;
 
@@ -103,9 +105,10 @@ export class LocalRuntime implements HandRuntime {
     const rec = await this.store.get(taskId);
     if (!rec || (rec.state !== "running" && rec.state !== "queued")) return;
 
-    // Mark cancelled in store BEFORE aborting the signal, so that
+    // Mark settled + cancelled BEFORE aborting the signal, so that
     // onExecutorDone() sees cancelled state even if the process exits
     // immediately after the abort (e.g. CLI killed by SIGTERM).
+    this.settled.add(taskId);
     await this.store.update(taskId, {
       state: "cancelled",
       updatedAt: new Date().toISOString(),
@@ -181,11 +184,15 @@ export class LocalRuntime implements HandRuntime {
     this.executor
       .execute(task, {
         signal: ac.signal,
-        onProgress: (u) =>
+        onProgress: (u) => {
+          // Skip if task already reached terminal state — prevents stale
+          // progress writes from clobbering cancel/completion records.
+          if (this.settled.has(task.taskId)) return;
           this.store.update(task.taskId, {
             currentTurn: u.currentTurn,
             updatedAt: new Date().toISOString(),
-          }),
+          });
+        },
         shell: this.deps.shell,
         sessionsDir: this.deps.sessionsDir,
         resuming: opts?.resuming,
@@ -207,6 +214,7 @@ export class LocalRuntime implements HandRuntime {
     result: TaskResult,
   ): Promise<void> {
     this.abortControllers.delete(task.taskId);
+    this.settled.add(task.taskId);
 
     // Guard: if task was already cancelled, deliver cancelled result instead
     // of overwriting state with executor's outcome

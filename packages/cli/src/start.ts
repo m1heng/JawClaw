@@ -114,7 +114,11 @@ export async function startBot(config: Config) {
     executor = new CLIExecutor({
       name: presetName || "custom-cli",
       command: handRuntimeConfig.command ?? preset?.command ?? "",
-      buildArgs: preset?.buildArgs ?? ((task) => [`'${task.description.replace(/'/g, "'\\''")}'`]),
+      buildArgs: preset?.buildArgs ?? ((task) => {
+        const prompt = task.description +
+          `\n\nContext: read ${task.sourceChat} for conversation history`;
+        return [`'${prompt.replace(/'/g, "'\\''")}'`];
+      }),
       parseOutput: preset?.parseOutput ?? ((stdout, code) => ({
         status: code === 0 ? "completed" as const : "failed" as const,
         summary: stdout.slice(-2000),

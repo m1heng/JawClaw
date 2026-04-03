@@ -47,7 +47,10 @@ export const CLI_PRESETS: Record<string, CLIPreset> = {
     command: "codex",
     buildArgs: (task: TaskDispatch) => [
       "--quiet",
-      shellEscape(task.description),
+      shellEscape(
+        task.description +
+          `\n\nContext: read ${task.sourceChat} for conversation history`,
+      ),
     ],
     parseOutput: (stdout, exitCode) => ({
       status: exitCode === 0 ? "completed" : "failed",
@@ -64,7 +67,10 @@ export const CLI_PRESETS: Record<string, CLIPreset> = {
     buildArgs: (task: TaskDispatch) => [
       "--yes",
       "--message",
-      shellEscape(task.description),
+      shellEscape(
+        task.description +
+          `\n\nContext: read ${task.sourceChat} for conversation history`,
+      ),
     ],
     parseOutput: (stdout, exitCode) => ({
       status: exitCode === 0 ? "completed" : "failed",
