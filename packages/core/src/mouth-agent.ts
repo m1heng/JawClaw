@@ -7,6 +7,8 @@ import { createReadTools } from "./read-tools.js";
 import { runReactLoop } from "./react-loop.js";
 import { buildSystemPrompt, mouthBootstrapFiles } from "./context.js";
 import { MOUTH_TOOLS } from "./tools.js";
+import { extractSessionMemory } from "./session-memory.js";
+import { recallMemories } from "./memory-recall.js";
 import type {
   AgentConfig,
   TaskDispatch,
@@ -74,9 +76,6 @@ Rules:
 /** Max messages to batch-drain per react loop cycle. */
 const MAX_BATCH = 5;
 
-/** Messages since last summary before auto-summary triggers. */
-const SUMMARY_THRESHOLD = 20;
-
 export type MessageMeta = {
   chatId: string;
   senderId: string;
@@ -99,7 +98,8 @@ export class MouthAgent {
   private handServices: HandServices;
   private sendMessage: SendMessageFn;
   private shell: Shell;
-  private lastSummaryMessageCount = 0;
+  private lastSessionMemoryCheckpoint = 0;
+  private extractingMemory = false;
 
   constructor(params: {
     sessionsDir: string;
@@ -182,16 +182,30 @@ export class MouthAgent {
       await this.runOnce();
     }
 
-    // Queue empty — check if we should auto-summarize
-    this.maybeSummarize();
+    // Queue empty — extract session memory if enough new messages
+    this.maybeExtractSessionMemory();
   }
 
   private async runOnce(): Promise<void> {
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+    const sessionMemoryPath = join(memRoot, "session-memory.md");
 
-    // Inject bootstrap files (SOUL.md, INSTRUCTIONS.md, MEMORY.md)
+    // Recall relevant memories via LLM
+    const recentMessages = await this.session.readTail(10);
+    const recalled = await recallMemories({
+      shell: this.shell,
+      memoryRoot: memRoot,
+      recentMessages,
+      llm: this.llm,
+      model: this.config.model,
+    });
+
+    // Inject bootstrap files (SOUL.md, INSTRUCTIONS.md, MEMORY.md, session-memory.md)
+    const basePrompt = recalled
+      ? MOUTH_SYSTEM_PROMPT + "\n\n" + recalled
+      : MOUTH_SYSTEM_PROMPT;
     const systemPrompt = await buildSystemPrompt(
-      MOUTH_SYSTEM_PROMPT,
+      basePrompt,
       mouthBootstrapFiles(memRoot),
       this.shell,
     );
@@ -283,6 +297,8 @@ export class MouthAgent {
       config: configWithMemory,
       llm: this.llm,
       tools,
+      sessionMemoryPath,
+      shell: this.shell,
       // Assistant text is internal reasoning — not sent to any channel
     });
   }
@@ -326,92 +342,49 @@ export class MouthAgent {
   }
 
   /**
-   * Auto-summarize: if enough new messages since last summary,
-   * dispatch a background Hand to generate a session summary.
-   * Checkpoint is persisted to disk so restarts don't re-summarize.
+   * Extract structured session memory via LLM when enough new messages
+   * have accumulated. Replaces the old Hand-based auto-summary.
+   * Checkpoint is persisted to disk so restarts don't re-extract.
    */
-  private maybeSummarize(): void {
-    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
-    const checkpointPath = join(memRoot, ".summary-checkpoint");
+  private maybeExtractSessionMemory(): void {
+    // Guard: skip if an extraction is already in flight
+    if (this.extractingMemory) return;
 
-    // Fire-and-forget: read checkpoint + session, decide, dispatch
+    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+    const checkpointPath = join(memRoot, ".session-memory-checkpoint");
+
+    this.extractingMemory = true;
+
+    // Fire-and-forget
     (async () => {
-      // Load persisted checkpoint (survives restarts)
-      let checkpoint = this.lastSummaryMessageCount;
+      // Load persisted checkpoint
+      let checkpoint = this.lastSessionMemoryCheckpoint;
       try {
         const stored = await this.shell.readFile(checkpointPath);
         const parsed = parseInt(stored.trim(), 10);
         if (parsed > checkpoint) checkpoint = parsed;
       } catch {
-        // No checkpoint file yet
+        // No checkpoint yet
       }
 
-      const allMessages = await this.session.readAll();
-      const newCount = allMessages.length - checkpoint;
-      if (newCount < SUMMARY_THRESHOLD) return;
-
-      // Update counter + persist before dispatch to prevent re-triggering
-      this.lastSummaryMessageCount = allMessages.length;
-      await this.shell.mkdir(memRoot);
-      await this.shell.writeFile(checkpointPath, String(allMessages.length));
-
-      const today = new Date().toISOString().slice(0, 10);
-      const ts = Date.now();
-      const summaryPath = join(
-        memRoot,
-        "summaries",
-        `${today}-${ts}.md`,
-      );
-      const memoryMdPath = join(memRoot, "MEMORY.md");
-
-      const description = [
-        "Generate a concise summary of the recent conversation and persist it to memory.",
-        "",
-        "Instructions:",
-        "1. Read the source chat session to understand what was discussed",
-        `2. Write a summary to: ${summaryPath}`,
-        "   - Use YAML frontmatter: type: session-summary, date: " + today,
-        "   - Include key decisions, action items, facts learned, user preferences",
-        `3. Update ${memoryMdPath} to include a reference to the new summary file`,
-        "   - If MEMORY.md doesn't exist, create it with a header and the first entry",
-        "   - If it exists, use edit_file to append the new entry (don't overwrite)",
-      ].join("\n");
-
-      const taskId = generateId();
-      const task: TaskDispatch = {
-        taskId,
-        description,
-        sourceChat: this.session.filePath,
-      };
-
-      const hand = new HandAgent({
-        task,
-        sessionsDir: this.sessionsDir,
-        config: this.handConfig,
-        llm: this.handLlm,
-        services: this.handServices,
+      const result = await extractSessionMemory({
+        session: this.session,
+        llm: this.llm, // Use Mouth's LLM (fast model)
+        model: this.config.model,
         shell: this.shell,
+        memoryRoot: memRoot,
+        lastCheckpoint: checkpoint,
       });
 
-      this.activeHands.set(taskId, hand);
-
-      // Fire and forget — don't notify user about housekeeping
-      hand.run().then(
-        (result) => {
-          this.activeHands.delete(taskId);
-          if (result.status === "failed") {
-            console.error(
-              `[auto-summary] Task ${taskId} failed: ${result.error}`,
-            );
-          }
-        },
-        (err) => {
-          this.activeHands.delete(taskId);
-          console.error(`[auto-summary] Task ${taskId} error:`, err);
-        },
-      );
-    })().catch(() => {
-      // Session/checkpoint read failed — skip this cycle
-    });
+      if (result) {
+        this.lastSessionMemoryCheckpoint = result.newCheckpoint;
+      }
+    })()
+      .catch(() => {
+        // Extraction failed — skip this cycle
+      })
+      .finally(() => {
+        this.extractingMemory = false;
+      });
   }
 }

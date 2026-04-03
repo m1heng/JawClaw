@@ -3,8 +3,10 @@ import type { MessageQueue } from "./message-queue.js";
 import type { AgentConfig, ToolCall } from "./types.js";
 import type { LLMClient, LLMMessage } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
+import type { Shell } from "./providers/shell.js";
 import { executeTool } from "./tool-executor.js";
-import { estimateTokens, compactHistory } from "./context.js";
+import { estimateTokens, compactHistoryWithMemory } from "./context.js";
+import { microcompactToolResults } from "./microcompact.js";
 
 export type ReactLoopParams = {
   session: ChatSession;
@@ -15,6 +17,8 @@ export type ReactLoopParams = {
   onAssistantMessage?: (content: string) => void;
   onTurn?: () => void;
   abortSignal?: AbortSignal;
+  sessionMemoryPath?: string;
+  shell?: Shell;
 };
 
 export async function runReactLoop(params: ReactLoopParams): Promise<string> {
@@ -43,20 +47,29 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       : 0;
     const availableBudget = maxContextTokens - systemTokens - toolsOverhead;
 
-    const { kept, trimmedCount } = compactHistory(history, availableBudget);
+    const { kept, trimmedCount, sessionMemory } = await compactHistoryWithMemory(
+      history, availableBudget,
+      { sessionMemoryPath: params.sessionMemoryPath, shell: params.shell },
+    );
+    const compacted = microcompactToolResults(kept);
 
     const messages: LLMMessage[] = [
       { role: "system", content: config.systemPrompt },
     ];
 
     if (trimmedCount > 0) {
+      // Session memory content is already in the system prompt via mouthBootstrapFiles.
+      // Here we only note that compaction happened; reference the existing injection.
+      const hint = sessionMemory
+        ? " Session memory with key context is included in the system prompt above."
+        : ` Use read_file on "${session.filePath}" for complete history.`;
       messages.push({
         role: "system",
-        content: `[${trimmedCount} earlier messages omitted due to context limits. Use read_file on "${session.filePath}" for complete history.]`,
+        content: `[${trimmedCount} earlier messages omitted due to context limits.${hint}]`,
       });
     }
 
-    const toMessage = (m: (typeof kept)[number]): LLMMessage => {
+    const toMessage = (m: (typeof compacted)[number]): LLMMessage => {
       if (m.role === "tool") {
         return {
           role: "tool",
@@ -82,7 +95,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       return { role: m.role as "user" | "system", content: m.content };
     };
 
-    messages.push(...kept.map(toMessage));
+    messages.push(...compacted.map(toMessage));
 
     // Call LLM
     const response = await llm.createCompletion({
