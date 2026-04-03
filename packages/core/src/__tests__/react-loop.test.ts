@@ -203,4 +203,68 @@ describe("runReactLoop", () => {
     // We can verify indirectly: LLM was called once
     expect(llm.calls).toHaveLength(1);
   });
+
+  it("retries on rate limit error then succeeds", async () => {
+    await session.append({ ts: "1", role: "user", content: "go" });
+
+    // First call: rate limit error. Second call: success.
+    llm.addErrorResponse(new Error("429 rate_limit exceeded"));
+    llm.addTextResponse("Recovered!");
+
+    const result = await runReactLoop({
+      session,
+      queue,
+      config,
+      llm,
+      tools: {},
+    });
+
+    expect(result).toBe("Recovered!");
+    expect(llm.calls).toHaveLength(2);
+  });
+
+  it("retries on prompt_too_long with emergency truncation", async () => {
+    await session.append({ ts: "1", role: "user", content: "go" });
+
+    // First call: context too long. Second call: success.
+    llm.addErrorResponse(new Error("context_length_exceeded: too many tokens"));
+    llm.addTextResponse("Trimmed and recovered!");
+
+    const result = await runReactLoop({
+      session,
+      queue,
+      config,
+      llm,
+      tools: {},
+    });
+
+    expect(result).toBe("Trimmed and recovered!");
+    expect(llm.calls).toHaveLength(2);
+  });
+
+  it("propagates unknown errors immediately", async () => {
+    await session.append({ ts: "1", role: "user", content: "go" });
+
+    llm.addErrorResponse(new Error("Internal server error: something weird"));
+
+    await expect(
+      runReactLoop({ session, queue, config, llm, tools: {} }),
+    ).rejects.toThrow("something weird");
+
+    expect(llm.calls).toHaveLength(1);
+  });
+
+  it("gives up after max retries on repeated rate limit", async () => {
+    await session.append({ ts: "1", role: "user", content: "go" });
+
+    llm.addErrorResponse(new Error("429 rate_limit"));
+    llm.addErrorResponse(new Error("429 rate_limit"));
+    llm.addErrorResponse(new Error("429 rate_limit"));
+
+    await expect(
+      runReactLoop({ session, queue, config, llm, tools: {} }),
+    ).rejects.toThrow("429 rate_limit");
+
+    expect(llm.calls).toHaveLength(3);
+  });
 });

@@ -3,6 +3,7 @@ import type { ToolDefinition, ToolCall } from "./types.js";
 export type LLMResponse = {
   content: string | null;
   toolCalls: ToolCall[];
+  stopReason?: "end_turn" | "tool_use" | "max_tokens" | "content_filter" | string;
 };
 
 export type LLMMessage =

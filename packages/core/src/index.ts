@@ -13,6 +13,12 @@ export type {
 } from "./types.js";
 export type { LLMClient, LLMResponse, LLMMessage } from "./llm.js";
 export type { ToolHandler, ToolRegistry } from "./tool-executor.js";
+export {
+  applyResultBudget,
+  executeToolsConcurrently,
+  CONCURRENT_SAFE_TOOLS,
+  DEFAULT_RESULT_BUDGET,
+} from "./tool-executor.js";
 export type { QueueMessage } from "./message-queue.js";
 
 // Providers
@@ -42,6 +48,8 @@ export {
   compactHistory,
   compactHistoryWithMemory,
   groupIntoUnits,
+  snipOldMessages,
+  collapseFailedGroups,
   buildSystemPrompt,
   mouthBootstrapFiles,
   handBootstrapFiles,

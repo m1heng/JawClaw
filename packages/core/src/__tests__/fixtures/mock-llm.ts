@@ -1,15 +1,22 @@
 import type { LLMClient, LLMResponse } from "../../llm.js";
 
+type QueuedItem =
+  | { type: "response"; response: LLMResponse }
+  | { type: "error"; error: Error };
+
 /**
  * Mock LLM client that returns pre-configured responses in order.
  */
 export class MockLLM implements LLMClient {
-  private responses: LLMResponse[] = [];
+  private queue: QueuedItem[] = [];
   calls: Array<{ model: string; messageCount: number }> = [];
 
   /** Queue a text-only response. */
-  addTextResponse(text: string): this {
-    this.responses.push({ content: text, toolCalls: [] });
+  addTextResponse(text: string, stopReason?: string): this {
+    this.queue.push({
+      type: "response",
+      response: { content: text, toolCalls: [], stopReason: stopReason ?? "end_turn" },
+    });
     return this;
   }
 
@@ -18,7 +25,16 @@ export class MockLLM implements LLMClient {
     toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
     content?: string,
   ): this {
-    this.responses.push({ content: content ?? null, toolCalls });
+    this.queue.push({
+      type: "response",
+      response: { content: content ?? null, toolCalls, stopReason: "tool_use" },
+    });
+    return this;
+  }
+
+  /** Queue an error that createCompletion will throw. */
+  addErrorResponse(error: Error): this {
+    this.queue.push({ type: "error", error });
     return this;
   }
 
@@ -28,8 +44,9 @@ export class MockLLM implements LLMClient {
     tools?: unknown[];
   }): Promise<LLMResponse> {
     this.calls.push({ model: params.model, messageCount: params.messages.length });
-    const response = this.responses.shift();
-    if (!response) throw new Error("MockLLM: no more responses queued");
-    return response;
+    const item = this.queue.shift();
+    if (!item) throw new Error("MockLLM: no more responses queued");
+    if (item.type === "error") throw item.error;
+    return item.response;
   }
 }

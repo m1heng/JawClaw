@@ -36,7 +36,7 @@ export function createAnthropicClient(apiKey: string, baseUrl?: string): LLMClie
         }
       }
 
-      return { content, toolCalls };
+      return { content, toolCalls, stopReason: response.stop_reason ?? undefined };
     },
   };
 }

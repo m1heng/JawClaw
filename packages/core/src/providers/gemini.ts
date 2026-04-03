@@ -37,12 +37,25 @@ export function createGeminiClient(apiKey: string): LLMClient {
           arguments: (fc.args ?? {}) as Record<string, unknown>,
         })) ?? [];
 
+      const stopReason = mapGeminiFinishReason(
+        response.candidates?.[0]?.finishReason,
+      );
       return {
         content: response.text ?? null,
         toolCalls,
+        stopReason,
       };
     },
   };
+}
+
+function mapGeminiFinishReason(reason: string | undefined): string | undefined {
+  switch (reason) {
+    case "STOP": return "end_turn";
+    case "MAX_TOKENS": return "max_tokens";
+    case "SAFETY": return "content_filter";
+    default: return reason ?? undefined;
+  }
 }
 
 function toFunctionDecl(t: ToolDefinition): FunctionDeclaration {

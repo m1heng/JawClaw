@@ -1,11 +1,16 @@
 import type { ChatSession } from "./chat-session.js";
 import type { MessageQueue } from "./message-queue.js";
-import type { AgentConfig, ToolCall } from "./types.js";
-import type { LLMClient, LLMMessage } from "./llm.js";
+import type { AgentConfig, ToolCall, ToolDefinition } from "./types.js";
+import type { LLMClient, LLMMessage, LLMResponse } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import type { Shell } from "./providers/shell.js";
-import { executeTool } from "./tool-executor.js";
-import { estimateTokens, compactHistoryWithMemory } from "./context.js";
+import { executeToolsConcurrently } from "./tool-executor.js";
+import {
+  estimateTokens,
+  snipOldMessages,
+  collapseFailedGroups,
+  compactHistoryWithMemory,
+} from "./context.js";
 import { microcompactToolResults } from "./microcompact.js";
 
 export type ReactLoopParams = {
@@ -36,7 +41,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       await session.append(chatMsg);
     }
 
-    // Build messages for LLM with compaction if needed
+    // Build messages for LLM with 5-layer compression pipeline
     const history = await session.readAll();
     const maxContextTokens = config.maxContextTokens ?? 100_000;
 
@@ -47,11 +52,19 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       : 0;
     const availableBudget = maxContextTokens - systemTokens - toolsOverhead;
 
+    // L1: Tool Result Budget — already applied at execution time (tool-executor)
+    // L2: Snip — drop ancient history by message count
+    const snipped = snipOldMessages(history);
+    // L3: Microcompact — truncate old tool results
+    const microcompacted = microcompactToolResults(snipped);
+    // L4: Collapse — fold consecutive failed tool-call groups
+    const collapsed = collapseFailedGroups(microcompacted);
+    // L5: Full compact — token budget + session memory
     const { kept, trimmedCount, sessionMemory } = await compactHistoryWithMemory(
-      history, availableBudget,
+      collapsed, availableBudget,
       { sessionMemoryPath: params.sessionMemoryPath, shell: params.shell },
     );
-    const compacted = microcompactToolResults(kept);
+    const compacted = kept;
 
     const messages: LLMMessage[] = [
       { role: "system", content: config.systemPrompt },
@@ -97,8 +110,8 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
 
     messages.push(...compacted.map(toMessage));
 
-    // Call LLM
-    const response = await llm.createCompletion({
+    // Call LLM with error recovery
+    const response = await callLLMWithRecovery(llm, {
       model: config.model,
       messages,
       tools: config.tools,
@@ -120,16 +133,16 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
         },
       });
 
-      // Execute each tool and append results
-      for (const toolCall of response.toolCalls) {
-        const result = await executeTool(toolCall, tools);
+      // Execute tools (parallel for read-only, serial for exclusive)
+      const results = await executeToolsConcurrently(response.toolCalls, tools);
+      for (let i = 0; i < response.toolCalls.length; i++) {
         await session.append({
           ts: new Date().toISOString(),
           role: "tool",
-          content: result,
+          content: results[i],
           meta: {
-            tool_call_id: toolCall.id,
-            tool_name: toolCall.name,
+            tool_call_id: response.toolCalls[i].id,
+            tool_name: response.toolCalls[i].name,
           },
         });
       }
@@ -149,4 +162,83 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
   }
 
   return "Max turns reached.";
+}
+
+// ── LLM Error Recovery ────────────────────────────────────────
+
+type LLMErrorType = "prompt_too_long" | "rate_limit" | "unknown";
+
+function classifyError(err: unknown): LLMErrorType {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes("context_length") ||
+    lower.includes("prompt_too_long") ||
+    (lower.includes("max") && lower.includes("token") && lower.includes("limit"))
+  ) {
+    return "prompt_too_long";
+  }
+  if (
+    lower.includes("rate_limit") ||
+    lower.includes("429") ||
+    lower.includes("overloaded") ||
+    lower.includes("503")
+  ) {
+    return "rate_limit";
+  }
+  return "unknown";
+}
+
+const MAX_LLM_RETRIES = 3;
+
+async function callLLMWithRecovery(
+  llm: LLMClient,
+  params: { model: string; messages: LLMMessage[]; tools?: ToolDefinition[] },
+): Promise<LLMResponse> {
+  let retries = 0;
+  let currentMessages = params.messages;
+
+  while (retries < MAX_LLM_RETRIES) {
+    try {
+      return await llm.createCompletion({
+        ...params,
+        messages: currentMessages,
+      });
+    } catch (err) {
+      retries++;
+      const errorType = classifyError(err);
+
+      if (errorType === "rate_limit" && retries < MAX_LLM_RETRIES) {
+        await sleep(1000 * Math.pow(2, retries - 1));
+        continue;
+      }
+
+      if (errorType === "prompt_too_long" && retries < MAX_LLM_RETRIES) {
+        // Emergency: keep system prompt + last 50% of conversation.
+        // Find a safe cut point that doesn't split tool-call groups:
+        // never start with an orphaned "tool" message.
+        const half = Math.floor(currentMessages.length / 2);
+        let cutIdx = Math.max(half, 1);
+        while (cutIdx < currentMessages.length && currentMessages[cutIdx].role === "tool") {
+          cutIdx++;
+        }
+        currentMessages = [
+          currentMessages[0],
+          {
+            role: "system" as const,
+            content: "[Emergency context reduction: older messages dropped due to token limit]",
+          },
+          ...currentMessages.slice(cutIdx),
+        ];
+        continue;
+      }
+
+      throw err;
+    }
+  }
+  throw new Error("Max LLM retries exceeded");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
