@@ -2,7 +2,6 @@ import { join } from "node:path";
 import { generateId } from "./id.js";
 import { ChatSession } from "./chat-session.js";
 import { MessageQueue } from "./message-queue.js";
-import { HandAgent } from "./hand-agent.js";
 import { createReadTools } from "./read-tools.js";
 import { runReactLoop } from "./react-loop.js";
 import { buildSystemPrompt, mouthBootstrapFiles } from "./context.js";
@@ -11,12 +10,12 @@ import type {
   AgentConfig,
   TaskDispatch,
   TaskResult,
-  HandServices,
   SendMessageFn,
 } from "./types.js";
 import type { LLMClient } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import type { Shell } from "./providers/shell.js";
+import type { HandRuntime } from "./runtime.js";
 
 const MOUTH_SYSTEM_PROMPT = `You are the Mouth Agent (Jaw) of JawClaw — the conversational interface.
 
@@ -50,7 +49,7 @@ IMPORTANT:
 - You can READ files and search, but NEVER write files or run commands.
 - You may receive messages from multiple channels at once — read the metadata to know who sent what.`;
 
-const HAND_SYSTEM_PROMPT = `You are a Hand Agent (Claw) of JawClaw. You execute coding tasks.
+export const HAND_SYSTEM_PROMPT = `You are a Hand Agent (Claw) of JawClaw. You execute coding tasks.
 
 Your job:
 - Execute the task described in your initial message
@@ -88,28 +87,26 @@ export class MouthAgent {
   readonly id = "mouth";
   readonly session: ChatSession;
   readonly queue: MessageQueue;
-  private activeHands: Map<string, HandAgent> = new Map();
   private loopRunning = false;
+  private drainPromise: Promise<void> | null = null;
   private pendingHandResults = false;
   private sessionsDir: string;
   private config: AgentConfig;
   private llm: LLMClient;
-  private handConfig: AgentConfig;
-  private handLlm: LLMClient;
-  private handServices: HandServices;
+  private runtime: HandRuntime;
   private sendMessage: SendMessageFn;
   private shell: Shell;
+  private memoryRoot: string;
   private lastSummaryMessageCount = 0;
 
   constructor(params: {
     sessionsDir: string;
     config: Omit<AgentConfig, "systemPrompt" | "tools">;
     llm: LLMClient;
-    handConfig: Omit<AgentConfig, "systemPrompt" | "tools">;
-    handLlm: LLMClient;
-    handServices?: HandServices;
+    runtime: HandRuntime;
     sendMessage: SendMessageFn;
     shell: Shell;
+    memoryRoot?: string;
   }) {
     this.sessionsDir = params.sessionsDir;
     this.session = new ChatSession(
@@ -123,16 +120,14 @@ export class MouthAgent {
       tools: MOUTH_TOOLS,
     };
     this.llm = params.llm;
-
-    this.handConfig = {
-      ...params.handConfig,
-      systemPrompt: HAND_SYSTEM_PROMPT,
-      tools: [],
-    };
-    this.handLlm = params.handLlm;
-    this.handServices = params.handServices ?? {};
+    this.runtime = params.runtime;
     this.sendMessage = params.sendMessage;
     this.shell = params.shell;
+    this.memoryRoot = params.memoryRoot ?? ".jawclaw/memory";
+
+    // Register completion callback — runtime delivers results here.
+    // Must be async so runtime can await delivery before marking delivered.
+    this.runtime.onComplete(async (result) => this.onHandComplete(result));
   }
 
   /**
@@ -152,12 +147,22 @@ export class MouthAgent {
       },
     });
 
+    this.ensureDrainLoop(); // fire-and-forget for user messages
+  }
+
+  /**
+   * Start the drain loop if not already running. Returns the loop's promise
+   * so callers that need delivery guarantees can await it.
+   */
+  private ensureDrainLoop(): Promise<void> {
     if (!this.loopRunning) {
       this.loopRunning = true;
-      this.drainLoop().finally(() => {
+      this.drainPromise = this.drainLoop().finally(() => {
         this.loopRunning = false;
+        this.drainPromise = null;
       });
     }
+    return this.drainPromise!;
   }
 
   /**
@@ -187,7 +192,7 @@ export class MouthAgent {
   }
 
   private async runOnce(): Promise<void> {
-    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+    const memRoot = this.memoryRoot;
 
     // Inject bootstrap files (SOUL.md, INSTRUCTIONS.md, MEMORY.md)
     const systemPrompt = await buildSystemPrompt(
@@ -213,7 +218,7 @@ export class MouthAgent {
         }
       },
 
-      // DISPATCH group
+      // DISPATCH group — all go through runtime
       dispatch_task: async (args) => {
         const description = args.description as string;
         const replyTo = args.reply_to as string | undefined;
@@ -226,53 +231,24 @@ export class MouthAgent {
           replyTo,
         };
 
-        const hand = new HandAgent({
-          task,
-          sessionsDir: this.sessionsDir,
-          config: this.handConfig,
-          llm: this.handLlm,
-          services: this.handServices,
-          shell: this.shell,
-        });
-
-        this.activeHands.set(taskId, hand);
-
-        hand.run().then(
-          (result) => {
-            this.activeHands.delete(taskId);
-            this.onHandComplete({ ...result, replyTo: task.replyTo });
-          },
-          (err) => {
-            this.activeHands.delete(taskId);
-            this.onHandComplete({
-              taskId,
-              status: "failed",
-              summary: "",
-              error: err instanceof Error ? err.message : String(err),
-              replyTo: task.replyTo,
-            });
-          },
-        );
-
+        await this.runtime.submit(task);
         return `Task dispatched (${taskId}). You will be notified when it completes.`;
       },
 
       list_tasks: async () => {
-        if (this.activeHands.size === 0) return "(no active tasks)";
-        const lines: string[] = [];
-        for (const [id, hand] of this.activeHands) {
-          lines.push(
-            `${id}  ${hand.status}  turn ${hand.currentTurn}  ${hand.taskDescription.slice(0, 80)}`,
-          );
-        }
-        return lines.join("\n");
+        const tasks = await this.runtime.list();
+        if (tasks.length === 0) return "(no active tasks)";
+        return tasks
+          .map(
+            (t) =>
+              `${t.taskId}  ${t.state}  turn ${t.currentTurn ?? "?"}  ${t.description.slice(0, 80)}`,
+          )
+          .join("\n");
       },
 
       cancel_task: async (args) => {
         const taskId = args.task_id as string;
-        const hand = this.activeHands.get(taskId);
-        if (!hand) return `Error: task ${taskId} not found.`;
-        hand.abortController.abort();
+        await this.runtime.cancel(taskId);
         return `Task ${taskId} cancellation requested.`;
       },
     };
@@ -290,8 +266,16 @@ export class MouthAgent {
   private async onHandComplete(
     result: TaskResult & { replyTo?: string },
   ): Promise<void> {
+    // Internal tasks (no replyTo): silently consume, don't pollute session
+    if (!result.replyTo) {
+      if (result.status === "failed") {
+        console.error(`[internal-task] Task ${result.taskId} failed: ${result.error}`);
+      }
+      return;
+    }
+
     // Cancelled tasks: record in session but don't trigger Mouth processing
-    if (result.error === "Task was cancelled.") {
+    if (result.status === "cancelled") {
       await this.session.append({
         ts: new Date().toISOString(),
         role: "user",
@@ -315,23 +299,20 @@ export class MouthAgent {
       meta: { chat_id: result.replyTo ?? "", sender_id: "hand", sender_name: "Hand Agent", channel: "internal" },
     });
 
-    // Trigger Mouth to process the result
+    // Trigger Mouth to process the result.
+    // Await the drain loop so runtime doesn't mark delivered until
+    // Mouth has actually sent the user-facing reply.
     this.pendingHandResults = true;
-    if (!this.loopRunning) {
-      this.loopRunning = true;
-      this.drainLoop().finally(() => {
-        this.loopRunning = false;
-      });
-    }
+    await this.ensureDrainLoop();
   }
 
   /**
    * Auto-summarize: if enough new messages since last summary,
-   * dispatch a background Hand to generate a session summary.
+   * dispatch a background task to generate a session summary.
    * Checkpoint is persisted to disk so restarts don't re-summarize.
    */
   private maybeSummarize(): void {
-    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+    const memRoot = this.memoryRoot;
     const checkpointPath = join(memRoot, ".summary-checkpoint");
 
     // Fire-and-forget: read checkpoint + session, decide, dispatch
@@ -378,38 +359,13 @@ export class MouthAgent {
       ].join("\n");
 
       const taskId = generateId();
-      const task: TaskDispatch = {
+
+      // Dispatch through runtime — no replyTo means internal task
+      await this.runtime.submit({
         taskId,
         description,
         sourceChat: this.session.filePath,
-      };
-
-      const hand = new HandAgent({
-        task,
-        sessionsDir: this.sessionsDir,
-        config: this.handConfig,
-        llm: this.handLlm,
-        services: this.handServices,
-        shell: this.shell,
       });
-
-      this.activeHands.set(taskId, hand);
-
-      // Fire and forget — don't notify user about housekeeping
-      hand.run().then(
-        (result) => {
-          this.activeHands.delete(taskId);
-          if (result.status === "failed") {
-            console.error(
-              `[auto-summary] Task ${taskId} failed: ${result.error}`,
-            );
-          }
-        },
-        (err) => {
-          this.activeHands.delete(taskId);
-          console.error(`[auto-summary] Task ${taskId} error:`, err);
-        },
-      );
     })().catch(() => {
       // Session/checkpoint read failed — skip this cycle
     });

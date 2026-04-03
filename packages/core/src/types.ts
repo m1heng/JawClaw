@@ -19,7 +19,7 @@ export type TaskDispatch = {
 
 export type TaskResult = {
   taskId: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "cancelled";
   summary: string;
   error?: string;
 };

@@ -1,14 +1,22 @@
 import {
   MouthAgent,
+  HAND_SYSTEM_PROMPT,
   CronScheduler,
   LocalShell,
   createOpenAIClient,
   createGeminiClient,
   createAnthropicClient,
+  HAND_TOOLS,
+  BuiltinExecutor,
+  CLIExecutor,
+  CLI_PRESETS,
+  LocalRuntime,
+  FileTaskStore,
+  FileCheckpointStore,
 } from "@jawclaw/core";
-import type { LLMClient, HandServices } from "@jawclaw/core";
+import type { LLMClient, HandServices, HandExecutor } from "@jawclaw/core";
 import { TelegramChannel, WeixinChannel, FeishuChannel } from "@jawclaw/channels";
-import type { Channel } from "@jawclaw/channels";
+import type { Channel, WeixinChannelOpts } from "@jawclaw/channels";
 import type { Config, ProviderConfig } from "./config.js";
 
 function createLLM(provider: ProviderConfig): LLMClient {
@@ -51,20 +59,24 @@ export async function startBot(config: Config) {
 
   const cron = new CronScheduler();
   const shell = new LocalShell();
-
   const sessionsDir = ".jawclaw/sessions";
+  const memoryRoot = ".jawclaw/memory";
 
-  // Multi-channel router: "channel:chatId" → channel instance
-  // Keyed by channel name + chatId to avoid cross-channel ID collisions.
+  // Multi-channel router: "channel:chatId" → channel instance (populated lazily on first message)
   const channelRouter = new Map<string, Channel>();
-
+  // Fallback: "channelType" → channel instance (populated at boot, for crash recovery)
+  const channelByType = new Map<string, Channel>();
   const routerKey = (channel: string, chatId: string) => `${channel}:${chatId}`;
 
   const sendMessage = async (compositeId: string, text: string) => {
-    const ch = channelRouter.get(compositeId);
+    const colonIdx = compositeId.indexOf(":");
+    let ch = channelRouter.get(compositeId);
+    // Fallback: route by channel type prefix (for crash recovery before any inbound message)
+    if (!ch && colonIdx > 0) {
+      ch = channelByType.get(compositeId.substring(0, colonIdx));
+    }
     if (ch) {
-      // Extract original chatId (strip "channel:" prefix)
-      const chatId = compositeId.substring(compositeId.indexOf(":") + 1);
+      const chatId = compositeId.substring(colonIdx + 1);
       await ch.sendReply(chatId, text);
     } else {
       console.error(`[router] No channel for chatId ${compositeId}`);
@@ -82,21 +94,68 @@ export async function startBot(config: Config) {
       }),
     cronList: () => cron.list(),
     cronDelete: (id) => cron.delete(id),
-    memoryRoot: ".jawclaw/memory",
+    memoryRoot,
   };
+
+  // Build runtime: TaskStore → Executor → Runtime
+  const taskStore = new FileTaskStore(".jawclaw/tasks", shell);
+  const checkpointStore = new FileCheckpointStore(".jawclaw/checkpoints", shell);
+
+  const handRuntimeConfig = config.hand ?? { type: "builtin" };
+  let executor: HandExecutor;
+
+  if (handRuntimeConfig.type === "cli") {
+    const presetName = handRuntimeConfig.preset ?? "";
+    const preset = CLI_PRESETS[presetName];
+    if (!preset && !handRuntimeConfig.command) {
+      console.error(`❌ Unknown CLI preset "${presetName}" and no custom command set.`);
+      process.exit(1);
+    }
+    executor = new CLIExecutor({
+      name: presetName || "custom-cli",
+      command: handRuntimeConfig.command ?? preset?.command ?? "",
+      buildArgs: preset?.buildArgs ?? ((task) => {
+        const prompt = task.description +
+          `\n\nContext: read ${task.sourceChat} for conversation history`;
+        return [`'${prompt.replace(/'/g, "'\\''")}'`];
+      }),
+      parseOutput: preset?.parseOutput ?? ((stdout, code) => ({
+        status: code === 0 ? "completed" as const : "failed" as const,
+        summary: stdout.slice(-2000),
+        error: code !== 0 ? `exit ${code}` : undefined,
+      })),
+      timeout: handRuntimeConfig.timeout,
+      env: handRuntimeConfig.env,
+    });
+  } else {
+    executor = new BuiltinExecutor({
+      llm: handLlm,
+      config: {
+        model: provider.handModel,
+        apiKey: provider.apiKey,
+        baseUrl: provider.baseUrl,
+        systemPrompt: HAND_SYSTEM_PROMPT,
+        tools: HAND_TOOLS,
+      },
+      services: handServices,
+      checkpointStore,
+    });
+  }
+
+  const runtime = new LocalRuntime(taskStore, executor, { shell, sessionsDir }, checkpointStore);
 
   const mouth = new MouthAgent({
     sessionsDir,
     config: { model: provider.mouthModel, apiKey: provider.apiKey, baseUrl: provider.baseUrl },
     llm: mouthLlm,
-    handConfig: { model: provider.handModel, apiKey: provider.apiKey, baseUrl: provider.baseUrl },
-    handLlm: handLlm,
-    handServices,
+    runtime,
     sendMessage,
     shell,
+    memoryRoot,
   });
 
-  // Start all configured channels
+  // Start all configured channels (before runtime.start() so channelRouter
+  // is populated before crash recovery replays completed-but-undelivered results)
   const activeChannels: Channel[] = [];
 
   for (const cc of channelConfigs) {
@@ -105,7 +164,27 @@ export async function startBot(config: Config) {
     if (cc.type === "telegram") {
       ch = new TelegramChannel(cc.token);
     } else if (cc.type === "weixin") {
-      ch = new WeixinChannel(cc.token);
+      const tokensPath = ".jawclaw/weixin-tokens.json";
+      let savedTokens: Record<string, string> | undefined;
+      try {
+        savedTokens = JSON.parse(await shell.readFile(tokensPath));
+      } catch {
+        // No saved tokens yet
+      }
+      // Accumulate tokens in memory so we can persist the full map.
+      // Writes are chained (serialized) to prevent out-of-order overwrites.
+      const liveTokens: Record<string, string> = { ...savedTokens };
+      let writeChain = Promise.resolve();
+      const wxOpts: WeixinChannelOpts = {
+        contextTokens: savedTokens,
+        onContextToken: (userId, token) => {
+          liveTokens[userId] = token;
+          writeChain = writeChain
+            .then(() => shell.writeFile(tokensPath, JSON.stringify(liveTokens) + "\n"))
+            .catch((err) => console.error("[weixin] Failed to persist context tokens:", err));
+        },
+      };
+      ch = new WeixinChannel(cc.token, undefined, wxOpts);
     } else if (cc.type === "feishu") {
       ch = new FeishuChannel(cc.token, cc.appSecret!);
     }
@@ -113,6 +192,7 @@ export async function startBot(config: Config) {
     if (!ch) continue;
 
     const channel = ch;
+    channelByType.set(cc.type, channel); // for crash recovery routing
     channel.onMessage(async (msg) => {
       const compositeId = routerKey(msg.channel, msg.chatId);
       channelRouter.set(compositeId, channel);
@@ -134,11 +214,15 @@ export async function startBot(config: Config) {
     process.exit(1);
   }
 
+  // Start runtime AFTER channels so channelRouter is populated for crash recovery
+  await runtime.start();
+
   console.log(`🐾 JawClaw running — ${activeChannels.length} channel(s) active`);
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log("\n🐾 Shutting down...");
+    await runtime.stop();
     cron.destroy();
     for (const ch of activeChannels) {
       await ch.stop().catch(() => {});

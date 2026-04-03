@@ -29,6 +29,9 @@ export class HandAgent {
   private llm: LLMClient;
   private services: HandServices;
   private shell: Shell;
+  private abortSignal: AbortSignal;
+  private onTurnCallback?: (turn: number) => Promise<void>;
+  private skipPrologue: boolean;
 
   constructor(params: {
     task: TaskDispatch;
@@ -37,6 +40,12 @@ export class HandAgent {
     llm: LLMClient;
     services?: HandServices;
     shell: Shell;
+    /** External turn callback (for progress reporting / checkpointing). */
+    onTurn?: (turn: number) => Promise<void>;
+    /** External abort signal (for runtime-controlled cancellation). */
+    abortSignal?: AbortSignal;
+    /** Skip appending the initial task message (for resume from checkpoint). */
+    skipPrologue?: boolean;
   }) {
     this.id = generateId();
     this.task = params.task;
@@ -45,6 +54,9 @@ export class HandAgent {
     this.llm = params.llm;
     this.services = params.services ?? {};
     this.shell = params.shell;
+    this.abortSignal = params.abortSignal ?? this.abortController.signal;
+    this.onTurnCallback = params.onTurn;
+    this.skipPrologue = params.skipPrologue ?? false;
     this.session = new ChatSession(
       join(params.sessionsDir, `hand_${this.task.taskId}.jsonl`),
       params.shell,
@@ -53,18 +65,21 @@ export class HandAgent {
   }
 
   async run(): Promise<TaskResult> {
-    const taskMessage = [
-      this.task.description,
-      "",
-      `Source chat session: ${this.task.sourceChat}`,
-      "(Use read_file to review the original conversation for more context)",
-    ].join("\n");
+    // Skip prologue when resuming from checkpoint (session already has the task message)
+    if (!this.skipPrologue) {
+      const taskMessage = [
+        this.task.description,
+        "",
+        `Source chat session: ${this.task.sourceChat}`,
+        "(Use read_file to review the original conversation for more context)",
+      ].join("\n");
 
-    await this.session.append({
-      ts: new Date().toISOString(),
-      role: "user",
-      content: taskMessage,
-    });
+      await this.session.append({
+        ts: new Date().toISOString(),
+        role: "user",
+        content: taskMessage,
+      });
+    }
 
     const memRoot = this.services.memoryRoot ?? ".jawclaw/memory";
 
@@ -91,19 +106,19 @@ export class HandAgent {
         config,
         llm: this.llm,
         tools,
-        abortSignal: this.abortController.signal,
-        onTurn: () => {
+        abortSignal: this.abortSignal,
+        onTurn: async () => {
           this.currentTurn++;
+          await this.onTurnCallback?.(this.currentTurn);
         },
       });
 
-      if (this.abortController.signal.aborted) {
+      if (this.abortSignal.aborted) {
         this.status = "failed";
         return {
           taskId: this.task.taskId,
-          status: "failed",
+          status: "cancelled",
           summary: "",
-          error: "Task was cancelled.",
         };
       }
 

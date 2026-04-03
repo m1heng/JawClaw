@@ -12,11 +12,11 @@ import type { Shell, ExecResult } from "./shell.js";
 export class LocalShell implements Shell {
   async exec(
     command: string,
-    opts?: { cwd?: string; timeout?: number },
+    opts?: { cwd?: string; timeout?: number; signal?: AbortSignal },
   ): Promise<ExecResult> {
     const timeout = opts?.timeout ?? 120_000;
     return new Promise((resolve) => {
-      exec(
+      const child = exec(
         command,
         { timeout, maxBuffer: 10 * 1024 * 1024, cwd: opts?.cwd },
         (err, stdout, stderr) => {
@@ -27,6 +27,16 @@ export class LocalShell implements Shell {
           });
         },
       );
+
+      if (opts?.signal) {
+        const onAbort = () => { child.kill(); };
+        if (opts.signal.aborted) {
+          child.kill();
+        } else {
+          opts.signal.addEventListener("abort", onAbort, { once: true });
+          child.on("exit", () => opts.signal!.removeEventListener("abort", onAbort));
+        }
+      }
     });
   }
 

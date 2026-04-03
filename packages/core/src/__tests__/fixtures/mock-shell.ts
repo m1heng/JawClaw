@@ -6,12 +6,12 @@ import type { Shell, ExecResult } from "../../providers/shell.js";
  */
 export class MockShell implements Shell {
   files = new Map<string, string>();
-  execCalls: Array<{ command: string; opts?: { cwd?: string; timeout?: number } }> = [];
+  execCalls: Array<{ command: string; opts?: { cwd?: string; timeout?: number; signal?: AbortSignal } }> = [];
   execHandler?: (command: string) => ExecResult;
 
   async exec(
     command: string,
-    opts?: { cwd?: string; timeout?: number },
+    opts?: { cwd?: string; timeout?: number; signal?: AbortSignal },
   ): Promise<ExecResult> {
     this.execCalls.push({ command, opts });
     if (this.execHandler) return this.execHandler(command);
