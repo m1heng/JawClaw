@@ -108,6 +108,95 @@ export async function compactHistoryWithMemory(
   return { kept, trimmedCount };
 }
 
+// ── Snip compact (message-count based) ──────────────────────────
+
+/**
+ * Drop ancient messages when total count exceeds threshold.
+ * Keeps the last ~80% of atomic units. Does NOT mutate input.
+ *
+ * This is a coarse pre-filter for extremely long histories,
+ * NOT a substitute for token-based compaction. The default threshold
+ * is intentionally high (200) to avoid dropping messages that still
+ * fit within the token budget.
+ */
+export function snipOldMessages(
+  messages: ChatMessage[],
+  maxMessages: number = 200,
+): ChatMessage[] {
+  if (messages.length <= maxMessages) return messages;
+
+  const units = groupIntoUnits(messages);
+  const targetCount = Math.ceil(units.length * 0.8);
+  const cutoff = units.length - targetCount;
+
+  return units.slice(cutoff).flat();
+}
+
+// ── Context collapse (fold consecutive failed groups) ───────────
+
+/**
+ * Check if a tool result indicates an explicit failure or empty search.
+ * Does NOT treat empty string as failure — commands like mkdir/touch/git add
+ * succeed silently and return empty stdout via formatExec.
+ */
+function isFailedResult(content: string): boolean {
+  const c = content.trim();
+  return (
+    c === "(no matches)" ||
+    c === "(no files found)" ||
+    c.startsWith("Error") ||
+    c.startsWith("exit code")
+  );
+}
+
+/**
+ * Fold runs of ≥3 consecutive failed tool-call groups into a single
+ * summary message. Does NOT mutate input.
+ */
+export function collapseFailedGroups(messages: ChatMessage[]): ChatMessage[] {
+  const units = groupIntoUnits(messages);
+  const result: ChatMessage[][] = [];
+  let failedRun: ChatMessage[][] = [];
+
+  const isFailedGroup = (unit: ChatMessage[]): boolean => {
+    if (unit.length < 2 || unit[0].role !== "assistant" || !unit[0].meta?.tool_calls) {
+      return false;
+    }
+    const toolResults = unit.filter((m) => m.role === "tool");
+    return toolResults.length > 0 && toolResults.every((m) => isFailedResult(m.content));
+  };
+
+  const flushFailed = () => {
+    if (failedRun.length < 3) {
+      result.push(...failedRun);
+    } else {
+      const toolNames = failedRun.flatMap((u) => {
+        const calls = u[0].meta?.tool_calls as Array<{ name: string }> | undefined;
+        return calls?.map((tc) => tc.name) ?? [];
+      });
+      const uniqueTools = [...new Set(toolNames)].join(", ");
+      result.push([{
+        ts: failedRun[0][0].ts,
+        role: "user" as const,
+        content: `[${failedRun.length} tool-call groups collapsed: all returned errors/empty. Tools used: ${uniqueTools}]`,
+      }]);
+    }
+    failedRun = [];
+  };
+
+  for (const unit of units) {
+    if (isFailedGroup(unit)) {
+      failedRun.push(unit);
+    } else {
+      flushFailed();
+      result.push(unit);
+    }
+  }
+  flushFailed();
+
+  return result.flat();
+}
+
 // ── Bootstrap file injection ─────────────────────────────────────
 
 const DEFAULT_MAX_PER_FILE = 8_000;

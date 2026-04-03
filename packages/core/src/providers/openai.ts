@@ -41,12 +41,24 @@ export function createOpenAIClient(
           ) as Record<string, unknown>,
         })) ?? [];
 
+      const stopReason = mapFinishReason(choice.finish_reason);
       return {
         content: choice.message.content,
         toolCalls,
+        stopReason,
       };
     },
   };
+}
+
+function mapFinishReason(reason: string | null | undefined): string | undefined {
+  switch (reason) {
+    case "stop": return "end_turn";
+    case "tool_calls": return "tool_use";
+    case "length": return "max_tokens";
+    case "content_filter": return "content_filter";
+    default: return reason ?? undefined;
+  }
 }
 
 function toOpenAIMessage(

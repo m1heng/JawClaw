@@ -3,6 +3,8 @@ import {
   estimateTokens,
   estimateMessageTokens,
   compactHistory,
+  snipOldMessages,
+  collapseFailedGroups,
   buildSystemPrompt,
   mouthBootstrapFiles,
   handBootstrapFiles,
@@ -93,6 +95,166 @@ describe("compactHistory", () => {
     if (hasAssistantWithToolCalls) {
       expect(hasToolResult).toBe(true);
     }
+  });
+});
+
+// ── Helpers for snip & collapse tests ────────────────────────────
+
+function toolGroup(
+  toolName: string,
+  result: string,
+  ts = "1",
+): ChatMessage[] {
+  return [
+    {
+      ts,
+      role: "assistant",
+      content: "",
+      meta: { tool_calls: [{ id: `tc_${ts}`, name: toolName, arguments: {} }] },
+    },
+    {
+      ts,
+      role: "tool",
+      content: result,
+      meta: { tool_call_id: `tc_${ts}`, tool_name: toolName },
+    },
+  ];
+}
+
+describe("snipOldMessages", () => {
+  it("returns unchanged when under threshold", () => {
+    const msgs: ChatMessage[] = Array.from({ length: 10 }, (_, i) => ({
+      ts: String(i),
+      role: "user" as const,
+      content: `msg ${i}`,
+    }));
+    expect(snipOldMessages(msgs, 100)).toEqual(msgs);
+  });
+
+  it("drops oldest units when over threshold", () => {
+    // 250 simple messages, threshold 200 → keep ~80% of units
+    const msgs: ChatMessage[] = Array.from({ length: 250 }, (_, i) => ({
+      ts: String(i),
+      role: "user" as const,
+      content: `msg ${i}`,
+    }));
+    const result = snipOldMessages(msgs, 200);
+    expect(result.length).toBeLessThan(250);
+    expect(result.length).toBeGreaterThan(150);
+    // Last message should be preserved
+    expect(result[result.length - 1].content).toBe("msg 249");
+  });
+
+  it("keeps tool-call groups atomic", () => {
+    const msgs: ChatMessage[] = [
+      ...Array.from({ length: 80 }, (_, i) => ({
+        ts: String(i),
+        role: "user" as const,
+        content: `msg ${i}`,
+      })),
+      ...toolGroup("read_file", "file content", "90"),
+      ...Array.from({ length: 30 }, (_, i) => ({
+        ts: String(100 + i),
+        role: "user" as const,
+        content: `msg ${100 + i}`,
+      })),
+    ];
+    const result = snipOldMessages(msgs, 100);
+    // If the tool group is kept, both assistant and tool should be present
+    const hasAssistant = result.some((m) => m.role === "assistant" && m.meta?.tool_calls);
+    const hasTool = result.some((m) => m.role === "tool");
+    if (hasAssistant) expect(hasTool).toBe(true);
+    if (hasTool) expect(hasAssistant).toBe(true);
+  });
+});
+
+describe("collapseFailedGroups", () => {
+  it("returns unchanged when no failed groups", () => {
+    const msgs: ChatMessage[] = [
+      { ts: "1", role: "user", content: "hello" },
+      ...toolGroup("read_file", "file contents", "2"),
+    ];
+    const result = collapseFailedGroups(msgs);
+    expect(result).toEqual(msgs);
+  });
+
+  it("does not collapse fewer than 3 consecutive failed groups", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+    ];
+    const result = collapseFailedGroups(msgs);
+    expect(result).toEqual(msgs);
+  });
+
+  it("collapses 3+ consecutive failed groups", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "Error: something", "2"),
+      ...toolGroup("glob", "(no files found)", "3"),
+    ];
+    const result = collapseFailedGroups(msgs);
+    // Should be collapsed into 1 message
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+    expect(result[0].content).toContain("3 tool-call groups collapsed");
+    expect(result[0].content).toContain("grep");
+    expect(result[0].content).toContain("glob");
+  });
+
+  it("preserves success groups around collapsed failures", () => {
+    const msgs: ChatMessage[] = [
+      { ts: "0", role: "user", content: "start" },
+      ...toolGroup("read_file", "success content", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+      ...toolGroup("grep", "(no matches)", "4"),
+      ...toolGroup("read_file", "more success", "5"),
+    ];
+    const result = collapseFailedGroups(msgs);
+    // user + success group(2) + collapsed(1) + success group(2) = 6
+    expect(result).toHaveLength(6);
+    expect(result[0].content).toBe("start");
+    expect(result[1].content).toBe("");  // assistant with tool_calls
+    expect(result[2].content).toBe("success content");
+    expect(result[3].content).toContain("3 tool-call groups collapsed");
+    expect(result[4].content).toBe(""); // assistant
+    expect(result[5].content).toBe("more success");
+  });
+
+  it("does not collapse empty-result groups (silent success)", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("run_command", "", "1"),
+      ...toolGroup("run_command", "", "2"),
+      ...toolGroup("run_command", "", "3"),
+    ];
+    const result = collapseFailedGroups(msgs);
+    // Empty results are silent successes (mkdir, touch, git add), NOT failures
+    expect(result).toEqual(msgs);
+  });
+
+  it("detects all failure patterns", () => {
+    const patterns = ["(no matches)", "(no files found)", "Error: bad", "exit code 1\nstderr: fail"];
+    for (const pattern of patterns) {
+      const msgs: ChatMessage[] = [
+        ...toolGroup("test", pattern, "1"),
+        ...toolGroup("test", pattern, "2"),
+        ...toolGroup("test", pattern, "3"),
+      ];
+      const result = collapseFailedGroups(msgs);
+      expect(result).toHaveLength(1);
+      expect(result[0].content).toContain("collapsed");
+    }
+  });
+
+  it("does not collapse non-tool-call messages", () => {
+    const msgs: ChatMessage[] = [
+      { ts: "1", role: "user", content: "" },
+      { ts: "2", role: "user", content: "" },
+      { ts: "3", role: "user", content: "" },
+    ];
+    const result = collapseFailedGroups(msgs);
+    expect(result).toEqual(msgs);
   });
 });
 
