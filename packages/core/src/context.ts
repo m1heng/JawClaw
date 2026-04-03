@@ -20,6 +20,28 @@ export function estimateMessageTokens(msg: ChatMessage): number {
 
 // ── Context compaction ───────────────────────────────────────────
 
+/** Group messages into atomic units: assistant+tool_calls+tool_results stay together. */
+export function groupIntoUnits(messages: ChatMessage[]): ChatMessage[][] {
+  const units: ChatMessage[][] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+    if (msg.role === "assistant" && msg.meta?.tool_calls) {
+      const group: ChatMessage[] = [msg];
+      i++;
+      while (i < messages.length && messages[i].role === "tool") {
+        group.push(messages[i]);
+        i++;
+      }
+      units.push(group);
+    } else {
+      units.push([msg]);
+      i++;
+    }
+  }
+  return units;
+}
+
 /**
  * Compact a ChatMessage[] history to fit within a token budget.
  *
@@ -33,24 +55,7 @@ export function compactHistory(
   history: ChatMessage[],
   maxTokens: number,
 ): { kept: ChatMessage[]; trimmedCount: number } {
-  // Group messages into atomic units
-  const units: ChatMessage[][] = [];
-  let i = 0;
-  while (i < history.length) {
-    const msg = history[i];
-    if (msg.role === "assistant" && msg.meta?.tool_calls) {
-      const group: ChatMessage[] = [msg];
-      i++;
-      while (i < history.length && history[i].role === "tool") {
-        group.push(history[i]);
-        i++;
-      }
-      units.push(group);
-    } else {
-      units.push([msg]);
-      i++;
-    }
-  }
+  const units = groupIntoUnits(history);
 
   // Walk from the end, keep units that fit (always keep at least the last unit)
   let budget = maxTokens;
@@ -71,6 +76,35 @@ export function compactHistory(
 
   const kept = units.slice(cutoff).flat();
   const trimmedCount = units.slice(0, cutoff).flat().length;
+  return { kept, trimmedCount };
+}
+
+/**
+ * Enhanced compaction that reads session memory when messages are dropped.
+ * Falls back to plain compaction if no session memory exists.
+ */
+export async function compactHistoryWithMemory(
+  history: ChatMessage[],
+  maxTokens: number,
+  opts?: { sessionMemoryPath?: string; shell?: Shell },
+): Promise<{
+  kept: ChatMessage[];
+  trimmedCount: number;
+  sessionMemory?: string;
+}> {
+  const { kept, trimmedCount } = compactHistory(history, maxTokens);
+
+  if (trimmedCount > 0 && opts?.sessionMemoryPath && opts?.shell) {
+    try {
+      const memory = await opts.shell.readFile(opts.sessionMemoryPath);
+      if (memory.trim()) {
+        return { kept, trimmedCount, sessionMemory: memory };
+      }
+    } catch {
+      // No session memory file — fall through
+    }
+  }
+
   return { kept, trimmedCount };
 }
 
@@ -141,6 +175,7 @@ export function mouthBootstrapFiles(memoryRoot: string): BootstrapFile[] {
     { label: "SOUL.md", path: join(wsRoot, "SOUL.md") },
     { label: "INSTRUCTIONS.md", path: join(wsRoot, "INSTRUCTIONS.md") },
     { label: "MEMORY.md", path: join(memoryRoot, "MEMORY.md") },
+    { label: "Session Memory", path: join(memoryRoot, "session-memory.md") },
   ];
 }
 

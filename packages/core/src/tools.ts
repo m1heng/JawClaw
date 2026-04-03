@@ -64,7 +64,7 @@ export const READ_TOOLS: ToolDefinition[] = [
   {
     name: "memory_query",
     description:
-      "Search shared memory files by keyword or regex. Memory is a semantic search interface (future VDB-backed), distinct from grep.",
+      "Search shared memory files by keyword or regex. Memory is a semantic search interface (future VDB-backed), distinct from grep. Note: Relevant memories are also automatically injected into context — use this tool for specific searches not covered by auto-recall.",
     parameters: {
       type: "object",
       properties: {

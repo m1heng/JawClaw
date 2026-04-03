@@ -98,5 +98,26 @@ function toAnthropicMessages(
     }
   }
 
-  return result;
+  // Anthropic API requires strictly alternating user/assistant roles,
+  // ending with user (Claude 4.6+ does not support assistant prefill).
+  // Merge consecutive same-role messages and trim trailing assistant.
+  const merged: Anthropic.Messages.MessageParam[] = [];
+  for (const msg of result) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.role === msg.role) {
+      // Merge into previous message of the same role
+      const prevContent = Array.isArray(prev.content) ? prev.content : [{ type: "text" as const, text: prev.content }];
+      const curContent = Array.isArray(msg.content) ? msg.content : [{ type: "text" as const, text: msg.content }];
+      prev.content = [...prevContent, ...curContent];
+    } else {
+      merged.push({ ...msg });
+    }
+  }
+
+  // Trim trailing assistant messages (Claude 4.6+ requires ending with user)
+  while (merged.length > 0 && merged[merged.length - 1].role === "assistant") {
+    merged.pop();
+  }
+
+  return merged;
 }

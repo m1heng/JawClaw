@@ -40,8 +40,16 @@ export {
   estimateTokens,
   estimateMessageTokens,
   compactHistory,
+  compactHistoryWithMemory,
+  groupIntoUnits,
   buildSystemPrompt,
   mouthBootstrapFiles,
   handBootstrapFiles,
 } from "./context.js";
 export type { BootstrapFile } from "./context.js";
+export { microcompactToolResults } from "./microcompact.js";
+export type { MicrocompactOptions } from "./microcompact.js";
+export { extractSessionMemory, buildExtractionPrompt } from "./session-memory.js";
+export type { SessionMemoryConfig } from "./session-memory.js";
+export { recallMemories, buildMemoryIndex, selectRelevantMemories } from "./memory-recall.js";
+export type { MemoryRecallConfig } from "./memory-recall.js";
