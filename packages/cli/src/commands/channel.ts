@@ -1,4 +1,5 @@
 import * as p from "@clack/prompts";
+import { initRegistry, listChannels, getChannel } from "@jawclaw/channels";
 import { loadConfig, saveConfig } from "../config.js";
 
 export async function handleChannel(subcmd?: string) {
@@ -20,61 +21,32 @@ async function addChannel() {
     return;
   }
 
+  await initRegistry(config.extensions);
+
+  const extensions = listChannels();
   const channelType = await p.select({
     message: "Channel type",
-    options: [
-      { value: "telegram", label: "Telegram" },
-      { value: "weixin", label: "WeChat (微信)" },
-      { value: "feishu", label: "Feishu (飞书)" },
-    ],
+    options: extensions.map((e) => ({ value: e.name, label: e.label })),
   });
 
   if (p.isCancel(channelType)) return;
 
-  if (channelType === "feishu") {
-    const creds = await p.group(
-      {
-        appId: () =>
-          p.text({
-            message: "App ID",
-            placeholder: "cli_xxxx",
-            validate: (v) => (!v ? "Required" : undefined),
-          }),
-        appSecret: () =>
-          p.text({
-            message: "App Secret",
-            placeholder: "xxxx",
-            validate: (v) => (!v ? "Required" : undefined),
-          }),
-      },
-      { onCancel: () => process.exit(0) },
-    );
+  const ext = getChannel(channelType as string)!;
+  const answers: Record<string, string> = {};
 
-    config.channels.push({
-      type: "feishu",
-      token: creds.appId as string,
-      appSecret: creds.appSecret as string,
+  for (const field of ext.configFields) {
+    const val = await p.text({
+      message: field.label,
+      placeholder: field.placeholder,
+      validate: field.required ? (v) => (!v ? "Required" : undefined) : undefined,
     });
-  } else {
-    const placeholder =
-      channelType === "telegram" ? "123456:ABC-DEF..." : "iLink bot token";
-
-    const token = await p.text({
-      message: "Bot Token",
-      placeholder,
-      validate: (v) => (!v ? "Required" : undefined),
-    });
-
-    if (p.isCancel(token)) return;
-
-    config.channels.push({
-      type: channelType as string,
-      token: token as string,
-    });
+    if (p.isCancel(val)) return;
+    answers[field.key] = val as string;
   }
 
+  config.channels.push({ type: channelType as string, ...answers });
   await saveConfig(config);
-  console.log(`✅ ${channelType} channel added`);
+  console.log(`✅ ${ext.label} channel added`);
 }
 
 async function removeChannel() {
@@ -89,12 +61,17 @@ async function removeChannel() {
     return;
   }
 
+  await initRegistry(config.extensions);
+
   const choice = await p.select({
     message: "Which channel to remove?",
-    options: config.channels.map((c, i) => ({
-      value: String(i),
-      label: `${c.type} (${c.token.slice(0, 8)}...)`,
-    })),
+    options: config.channels.map((c, i) => {
+      const ext = getChannel(c.type);
+      const name = ext ? ext.label : c.type;
+      // Show a config hint to distinguish duplicates (e.g. "Telegram (123456:A...)")
+      const hint = c.token ? ` (${c.token.slice(0, 10)}...)` : "";
+      return { value: String(i), label: `${name}${hint}` };
+    }),
   });
 
   if (p.isCancel(choice)) return;
@@ -102,5 +79,7 @@ async function removeChannel() {
   const idx = Number(choice);
   const removed = config.channels.splice(idx, 1)[0];
   await saveConfig(config);
-  console.log(`✅ Removed ${removed.type} channel`);
+
+  const ext = getChannel(removed.type);
+  console.log(`✅ Removed ${ext ? ext.label : removed.type} channel`);
 }

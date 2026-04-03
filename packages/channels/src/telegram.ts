@@ -1,10 +1,12 @@
 import { Bot } from "grammy";
 import type { Channel, ChannelMessage } from "./channel.js";
 import { chunkText } from "./channel.js";
+import type { ChannelExtension } from "./extension.js";
 
 const TG_TEXT_LIMIT = 4096;
 
 export class TelegramChannel implements Channel {
+  channelName = "telegram";
   private bot: Bot;
   private handler?: (msg: ChannelMessage) => Promise<void>;
 
@@ -22,7 +24,7 @@ export class TelegramChannel implements Channel {
         senderName:
           ctx.from.first_name +
           (ctx.from.last_name ? ` ${ctx.from.last_name}` : ""),
-        channel: "telegram",
+        channel: this.channelName,
       });
     });
   }
@@ -70,3 +72,13 @@ export class TelegramChannel implements Channel {
     }
   }
 }
+
+export const telegramExtension: ChannelExtension = {
+  type: "channel",
+  name: "telegram",
+  label: "Telegram",
+  configFields: [
+    { key: "token", label: "Bot Token", placeholder: "123456:ABC-DEF...", required: true },
+  ],
+  create: (c) => new TelegramChannel(c.token),
+};

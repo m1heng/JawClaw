@@ -12,14 +12,14 @@ export type ProviderConfig = {
 };
 
 export type ChannelConfig = {
-  type: string; // "telegram" | "weixin" | "feishu"
-  token: string;
-  appSecret?: string; // Feishu only (token holds appId)
+  type: string;
+  [key: string]: string;
 };
 
 export type Config = {
   provider?: ProviderConfig;
   channels: ChannelConfig[];
+  extensions?: string[];
 };
 
 export async function loadConfig(): Promise<Config | null> {

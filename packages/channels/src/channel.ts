@@ -48,6 +48,8 @@ export type ChannelMessage = {
 };
 
 export interface Channel {
+  /** Channel identity — injected by registry via createChannel(). Extension authors need not set this. */
+  channelName?: string;
   start(): Promise<void>;
   stop(): Promise<void>;
   onMessage(handler: (msg: ChannelMessage) => Promise<void>): void;

@@ -1,10 +1,12 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import type { Channel, ChannelMessage } from "./channel.js";
 import { chunkText } from "./channel.js";
+import type { ChannelExtension } from "./extension.js";
 
 const FEISHU_TEXT_LIMIT = 4000;
 
 export class FeishuChannel implements Channel {
+  channelName = "feishu";
   private client: lark.Client;
   private wsClient: lark.WSClient;
   private dispatcher: lark.EventDispatcher;
@@ -107,7 +109,7 @@ export class FeishuChannel implements Channel {
       chatId,
       text,
       senderId,
-      channel: "feishu",
+      channel: this.channelName,
     });
   }
 
@@ -127,3 +129,14 @@ export class FeishuChannel implements Channel {
     return lines.join("\n");
   }
 }
+
+export const feishuExtension: ChannelExtension = {
+  type: "channel",
+  name: "feishu",
+  label: "Feishu (飞书)",
+  configFields: [
+    { key: "token", label: "App ID", placeholder: "cli_xxxx", required: true },
+    { key: "appSecret", label: "App Secret", required: true },
+  ],
+  create: (c) => new FeishuChannel(c.token, c.appSecret),
+};

@@ -1,9 +1,11 @@
 import type { Channel, ChannelMessage } from "./channel.js";
 import { chunkText } from "./channel.js";
+import type { ChannelExtension } from "./extension.js";
 
 const WX_TEXT_LIMIT = 2000;
 
 export class WeixinChannel implements Channel {
+  channelName = "weixin";
   private token: string;
   private baseUrl: string;
   private handler?: (msg: ChannelMessage) => Promise<void>;
@@ -146,7 +148,7 @@ export class WeixinChannel implements Channel {
       chatId: userId,
       text,
       senderId: userId,
-      channel: "weixin",
+      channel: this.channelName,
     });
   }
 
@@ -174,3 +176,13 @@ export class WeixinChannel implements Channel {
     if (!res.ok) throw new Error(`sendmessage HTTP ${res.status}`);
   }
 }
+
+export const weixinExtension: ChannelExtension = {
+  type: "channel",
+  name: "weixin",
+  label: "WeChat (微信)",
+  configFields: [
+    { key: "token", label: "Bot Token", placeholder: "iLink bot token", required: true },
+  ],
+  create: (c) => new WeixinChannel(c.token),
+};
