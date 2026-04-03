@@ -38,9 +38,12 @@ export class MemoryTaskStore implements TaskStore {
   async claim(taskId: string, workerId: string): Promise<boolean> {
     const rec = this.records.get(taskId);
     if (!rec || rec.state !== "queued") return false;
-    rec.state = "running";
-    rec.workerId = workerId;
-    rec.updatedAt = new Date().toISOString();
+    this.records.set(taskId, {
+      ...rec,
+      state: "running",
+      workerId,
+      updatedAt: new Date().toISOString(),
+    });
     return true;
   }
 

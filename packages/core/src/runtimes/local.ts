@@ -103,11 +103,14 @@ export class LocalRuntime implements HandRuntime {
     const rec = await this.store.get(taskId);
     if (!rec || (rec.state !== "running" && rec.state !== "queued")) return;
 
-    this.abortControllers.get(taskId)?.abort();
+    // Mark cancelled in store BEFORE aborting the signal, so that
+    // onExecutorDone() sees cancelled state even if the process exits
+    // immediately after the abort (e.g. CLI killed by SIGTERM).
     await this.store.update(taskId, {
       state: "cancelled",
       updatedAt: new Date().toISOString(),
     });
+    this.abortControllers.get(taskId)?.abort();
   }
 
   async status(taskId: string): Promise<TaskStatus | null> {
@@ -257,7 +260,12 @@ export class LocalRuntime implements HandRuntime {
   ): TaskResult & { replyTo?: string } {
     return {
       taskId: rec.taskId,
-      status: rec.state === "completed" ? "completed" : "failed",
+      status:
+        rec.state === "completed"
+          ? "completed"
+          : rec.state === "cancelled"
+            ? "cancelled"
+            : "failed",
       summary: rec.summary ?? "",
       error: rec.error,
       replyTo: rec.replyTo,

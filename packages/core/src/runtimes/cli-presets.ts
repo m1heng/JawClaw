@@ -1,5 +1,6 @@
 import type { TaskDispatch } from "../types.js";
 import type { CLIExecutorConfig } from "./cli-executor.js";
+import { shellEscape } from "../shell-escape.js";
 
 type CLIPreset = Omit<CLIExecutorConfig, "name">;
 
@@ -14,7 +15,7 @@ export const CLI_PRESETS: Record<string, CLIPreset> = {
     command: "claude",
     buildArgs: (task: TaskDispatch) => [
       "-p",
-      shellArg(
+      shellEscape(
         task.description +
           `\n\nContext: read ${task.sourceChat} for conversation history`,
       ),
@@ -46,7 +47,7 @@ export const CLI_PRESETS: Record<string, CLIPreset> = {
     command: "codex",
     buildArgs: (task: TaskDispatch) => [
       "--quiet",
-      shellArg(task.description),
+      shellEscape(task.description),
     ],
     parseOutput: (stdout, exitCode) => ({
       status: exitCode === 0 ? "completed" : "failed",
@@ -63,7 +64,7 @@ export const CLI_PRESETS: Record<string, CLIPreset> = {
     buildArgs: (task: TaskDispatch) => [
       "--yes",
       "--message",
-      shellArg(task.description),
+      shellEscape(task.description),
     ],
     parseOutput: (stdout, exitCode) => ({
       status: exitCode === 0 ? "completed" : "failed",
@@ -75,8 +76,3 @@ export const CLI_PRESETS: Record<string, CLIPreset> = {
     }),
   },
 };
-
-/** Wrap argument in single quotes for shell safety. */
-function shellArg(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
-}

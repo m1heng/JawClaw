@@ -3,6 +3,13 @@ import { chunkText } from "./channel.js";
 
 const WX_TEXT_LIMIT = 2000;
 
+export type WeixinChannelOpts = {
+  /** Pre-loaded context tokens from a previous session (crash recovery). */
+  contextTokens?: Record<string, string>;
+  /** Called when a context token is learned/updated — persist for crash recovery. */
+  onContextToken?: (userId: string, token: string) => void;
+};
+
 export class WeixinChannel implements Channel {
   private token: string;
   private baseUrl: string;
@@ -10,14 +17,21 @@ export class WeixinChannel implements Channel {
   private running = false;
   private syncBuf = "";
   private contextTokens = new Map<string, string>();
+  private onContextTokenCb?: (userId: string, token: string) => void;
   private headers: Record<string, string>;
 
-  constructor(token: string, baseUrl?: string) {
+  constructor(token: string, baseUrl?: string, opts?: WeixinChannelOpts) {
     this.token = token;
     this.baseUrl = (baseUrl || "https://ilinkai.weixin.qq.com").replace(
       /\/$/,
       "",
     );
+    if (opts?.contextTokens) {
+      for (const [k, v] of Object.entries(opts.contextTokens)) {
+        this.contextTokens.set(k, v);
+      }
+    }
+    this.onContextTokenCb = opts?.onContextToken;
     this.headers = {
       "Content-Type": "application/json",
       AuthorizationType: "ilink_bot_token",
@@ -79,6 +93,7 @@ export class WeixinChannel implements Channel {
     // WeChat iLink API doesn't support typing indicators
   }
 
+
   private async pollLoop(): Promise<void> {
     let failures = 0;
 
@@ -124,7 +139,10 @@ export class WeixinChannel implements Channel {
     const userId = msg.from_user_id as string;
     const contextToken = msg.context_token as string;
 
-    if (contextToken) this.contextTokens.set(userId, contextToken);
+    if (contextToken) {
+      this.contextTokens.set(userId, contextToken);
+      this.onContextTokenCb?.(userId, contextToken);
+    }
 
     // Extract text from item_list
     const items = (msg.item_list as Array<Record<string, unknown>>) || [];

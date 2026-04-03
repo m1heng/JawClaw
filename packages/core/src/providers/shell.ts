@@ -7,7 +7,7 @@ export type ExecResult = {
 export type Shell = {
   exec(
     command: string,
-    opts?: { cwd?: string; timeout?: number },
+    opts?: { cwd?: string; timeout?: number; signal?: AbortSignal },
   ): Promise<ExecResult>;
   readFile(path: string): Promise<string>;
   writeFile(path: string, content: string): Promise<void>;

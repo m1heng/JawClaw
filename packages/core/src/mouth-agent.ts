@@ -88,6 +88,7 @@ export class MouthAgent {
   readonly session: ChatSession;
   readonly queue: MessageQueue;
   private loopRunning = false;
+  private drainPromise: Promise<void> | null = null;
   private pendingHandResults = false;
   private sessionsDir: string;
   private config: AgentConfig;
@@ -146,12 +147,22 @@ export class MouthAgent {
       },
     });
 
+    this.ensureDrainLoop(); // fire-and-forget for user messages
+  }
+
+  /**
+   * Start the drain loop if not already running. Returns the loop's promise
+   * so callers that need delivery guarantees can await it.
+   */
+  private ensureDrainLoop(): Promise<void> {
     if (!this.loopRunning) {
       this.loopRunning = true;
-      this.drainLoop().finally(() => {
+      this.drainPromise = this.drainLoop().finally(() => {
         this.loopRunning = false;
+        this.drainPromise = null;
       });
     }
+    return this.drainPromise!;
   }
 
   /**
@@ -288,14 +299,11 @@ export class MouthAgent {
       meta: { chat_id: result.replyTo ?? "", sender_id: "hand", sender_name: "Hand Agent", channel: "internal" },
     });
 
-    // Trigger Mouth to process the result
+    // Trigger Mouth to process the result.
+    // Await the drain loop so runtime doesn't mark delivered until
+    // Mouth has actually sent the user-facing reply.
     this.pendingHandResults = true;
-    if (!this.loopRunning) {
-      this.loopRunning = true;
-      this.drainLoop().finally(() => {
-        this.loopRunning = false;
-      });
-    }
+    await this.ensureDrainLoop();
   }
 
   /**

@@ -30,7 +30,7 @@ export class FileCheckpointStore implements CheckpointStore {
 
     // listFiles returns full paths; find the highest turn number
     const turnFiles = files
-      .filter((f) => f.endsWith(".json"))
+      .filter((f) => f.endsWith(".json") && /[/\\]turn_/.test(f))
       .sort();
 
     if (turnFiles.length === 0) return null;

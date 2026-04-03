@@ -1,5 +1,6 @@
 import type { TaskDispatch, TaskResult } from "../types.js";
 import type { HandExecutor, ExecutionContext } from "../runtime.js";
+import { shellEscape } from "../shell-escape.js";
 
 export type CLIExecutorConfig = {
   /** Display name, e.g. "claude-code". */
@@ -51,11 +52,8 @@ export class CLIExecutor implements HandExecutor {
 
     const { stdout, stderr, exitCode } = await ctx.shell.exec(
       `${envPrefix}${cmd}`,
-      { timeout: this.opts.timeout ?? 600_000 },
+      { timeout: this.opts.timeout ?? 600_000, signal: ctx.signal },
     );
-
-    // TODO: abort support requires Shell.exec to accept AbortSignal.
-    // For now, CLI tasks run to completion or timeout.
 
     const parsed = this.opts.parseOutput(stdout, exitCode);
 
@@ -69,9 +67,4 @@ export class CLIExecutor implements HandExecutor {
       ...parsed,
     };
   }
-}
-
-/** Minimal shell escaping for env values. */
-function shellEscape(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }

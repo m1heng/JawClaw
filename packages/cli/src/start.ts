@@ -16,7 +16,7 @@ import {
 } from "@jawclaw/core";
 import type { LLMClient, HandServices, HandExecutor } from "@jawclaw/core";
 import { TelegramChannel, WeixinChannel, FeishuChannel } from "@jawclaw/channels";
-import type { Channel } from "@jawclaw/channels";
+import type { Channel, WeixinChannelOpts } from "@jawclaw/channels";
 import type { Config, ProviderConfig } from "./config.js";
 
 function createLLM(provider: ProviderConfig): LLMClient {
@@ -160,7 +160,27 @@ export async function startBot(config: Config) {
     if (cc.type === "telegram") {
       ch = new TelegramChannel(cc.token);
     } else if (cc.type === "weixin") {
-      ch = new WeixinChannel(cc.token);
+      const tokensPath = ".jawclaw/weixin-tokens.json";
+      let savedTokens: Record<string, string> | undefined;
+      try {
+        savedTokens = JSON.parse(await shell.readFile(tokensPath));
+      } catch {
+        // No saved tokens yet
+      }
+      // Accumulate tokens in memory so we can persist the full map.
+      // Writes are chained (serialized) to prevent out-of-order overwrites.
+      const liveTokens: Record<string, string> = { ...savedTokens };
+      let writeChain = Promise.resolve();
+      const wxOpts: WeixinChannelOpts = {
+        contextTokens: savedTokens,
+        onContextToken: (userId, token) => {
+          liveTokens[userId] = token;
+          writeChain = writeChain
+            .then(() => shell.writeFile(tokensPath, JSON.stringify(liveTokens) + "\n"))
+            .catch((err) => console.error("[weixin] Failed to persist context tokens:", err));
+        },
+      };
+      ch = new WeixinChannel(cc.token, undefined, wxOpts);
     } else if (cc.type === "feishu") {
       ch = new FeishuChannel(cc.token, cc.appSecret!);
     }
