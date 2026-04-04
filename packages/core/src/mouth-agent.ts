@@ -16,7 +16,7 @@ import type {
   HandServices,
   SendMessageFn,
 } from "./types.js";
-import type { LLMClient } from "./llm.js";
+import type { LLMClient, LLMUsage } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import type { Shell } from "./providers/shell.js";
 
@@ -100,6 +100,8 @@ export class MouthAgent {
   private shell: Shell;
   private lastSessionMemoryCheckpoint = 0;
   private extractingMemory = false;
+  private consolidating = false;
+  private lastConsolidationTs = 0;
 
   constructor(params: {
     sessionsDir: string;
@@ -140,6 +142,14 @@ export class MouthAgent {
    * If the drain loop isn't running, start it.
    */
   async handleMessage(text: string, meta: MessageMeta): Promise<void> {
+    // Commands: handle locally without going through LLM
+    const cmd = this.matchCommand(text.trim());
+    if (cmd) {
+      const result = await cmd();
+      try { await this.sendMessage(meta.chatId, result); } catch { /* send failure */ }
+      return;
+    }
+
     this.queue.enqueue({
       content: text,
       from: meta.senderId,
@@ -158,6 +168,48 @@ export class MouthAgent {
         this.loopRunning = false;
       });
     }
+  }
+
+  /** Match a /command and return its handler, or null. */
+  private matchCommand(text: string): (() => Promise<string>) | null {
+    if (!text.startsWith("/")) return null;
+    const [cmd] = text.split(/\s+/, 1);
+    switch (cmd) {
+      case "/status":
+        return () => this.cmdStatus();
+      case "/clear":
+        return () => this.cmdClear();
+      default:
+        return null;
+    }
+  }
+
+  private async cmdStatus(): Promise<string> {
+    const messages = await this.session.readAll();
+    const hands = this.activeHands.size;
+    const lines = [
+      `Session: ${messages.length} messages`,
+      `Active tasks: ${hands}`,
+    ];
+    if (hands > 0) {
+      for (const [id, hand] of this.activeHands) {
+        lines.push(`  ${id} [${hand.status}] turn ${hand.currentTurn} — ${hand.taskDescription.slice(0, 60)}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  private async cmdClear(): Promise<string> {
+    // Archive current session file, start fresh
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const archivePath = join(this.sessionsDir, `mouth_${ts}.jsonl`);
+    try {
+      const content = await this.shell.readFile(this.session.filePath);
+      await this.shell.writeFile(archivePath, content);
+    } catch { /* no existing session to archive */ }
+    await this.shell.writeFile(this.session.filePath, "");
+    this.lastSessionMemoryCheckpoint = 0;
+    return `Session cleared. Previous session archived to ${archivePath}`;
   }
 
   /**
@@ -182,8 +234,9 @@ export class MouthAgent {
       await this.runOnce();
     }
 
-    // Queue empty — extract session memory if enough new messages
+    // Queue empty — background housekeeping
     this.maybeExtractSessionMemory();
+    this.maybeConsolidateMemory();
   }
 
   private async runOnce(): Promise<void> {
@@ -299,6 +352,7 @@ export class MouthAgent {
       tools,
       sessionMemoryPath,
       shell: this.shell,
+      onUsage: (usage) => this.logUsage(usage),
       // Assistant text is internal reasoning — not sent to any channel
     });
   }
@@ -386,5 +440,93 @@ export class MouthAgent {
       .finally(() => {
         this.extractingMemory = false;
       });
+  }
+
+  /** Append LLM usage to .jawclaw/usage.jsonl (fire-and-forget). */
+  private logUsage(usage: LLMUsage): void {
+    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+    const usagePath = join(memRoot, "..", "usage.jsonl");
+    const entry = JSON.stringify({
+      ts: new Date().toISOString(),
+      agent: "mouth",
+      model: this.config.model,
+      ...usage,
+    });
+    this.shell.appendFile(usagePath, entry + "\n").catch(() => {});
+  }
+
+  /**
+   * Dispatch a consolidation Hand Agent when idle and gates pass:
+   * - No active Hand agents
+   * - Not already consolidating
+   * - ≥24h since last consolidation
+   * - ≥50 new session messages since last consolidation
+   */
+  private maybeConsolidateMemory(): void {
+    if (this.consolidating) return;
+    if (this.activeHands.size > 0) return;
+
+    const CONSOLIDATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+    const CONSOLIDATION_MSG_THRESHOLD = 50;
+
+    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+    const checkpointPath = join(memRoot, ".consolidation-checkpoint");
+
+    this.consolidating = true;
+
+    (async () => {
+      // Load checkpoint
+      let lastTs = this.lastConsolidationTs;
+      let lastMsgCount = 0;
+      try {
+        const raw = await this.shell.readFile(checkpointPath);
+        const parsed = JSON.parse(raw);
+        if (parsed.ts > lastTs) lastTs = parsed.ts;
+        lastMsgCount = parsed.msgCount ?? 0;
+      } catch { /* no checkpoint */ }
+
+      // Gate 1: time
+      if (Date.now() - lastTs < CONSOLIDATION_INTERVAL_MS) return;
+
+      // Gate 2: message count
+      const allMessages = await this.session.readAll();
+      if (allMessages.length - lastMsgCount < CONSOLIDATION_MSG_THRESHOLD) return;
+
+      // Dispatch consolidation Hand
+      const taskId = generateId();
+      const task: TaskDispatch = {
+        taskId,
+        description: [
+          "Consolidate memory files. Read all files in the memory directory,",
+          "merge duplicates, remove outdated information, and organize into",
+          "clean, well-structured files. Do NOT delete files — update them in place.",
+          `Memory directory: ${memRoot}/`,
+          `Read ${memRoot}/MEMORY.md for the current index.`,
+        ].join("\n"),
+        sourceChat: this.session.filePath,
+      };
+
+      const hand = new HandAgent({
+        task,
+        sessionsDir: this.sessionsDir,
+        config: this.handConfig,
+        llm: this.handLlm,
+        services: this.handServices,
+        shell: this.shell,
+      });
+
+      // Fire-and-forget: Hand runs independently, resets flag when done
+      hand.run()
+        .then(async () => {
+          const checkpoint = JSON.stringify({
+            ts: Date.now(),
+            msgCount: allMessages.length,
+          });
+          await this.shell.writeFile(checkpointPath, checkpoint);
+          this.lastConsolidationTs = Date.now();
+        })
+        .catch(() => { /* consolidation failed — try again next cycle */ })
+        .finally(() => { this.consolidating = false; });
+    })().catch(() => { this.consolidating = false; });
   }
 }

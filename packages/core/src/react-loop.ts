@@ -1,7 +1,7 @@
 import type { ChatSession } from "./chat-session.js";
 import type { MessageQueue } from "./message-queue.js";
 import type { AgentConfig, ToolCall, ToolDefinition } from "./types.js";
-import type { LLMClient, LLMMessage, LLMResponse } from "./llm.js";
+import type { LLMClient, LLMMessage, LLMResponse, LLMUsage } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import type { Shell } from "./providers/shell.js";
 import { executeToolsConcurrently } from "./tool-executor.js";
@@ -20,6 +20,7 @@ export type ReactLoopParams = {
   llm: LLMClient;
   tools: ToolRegistry;
   onAssistantMessage?: (content: string) => void;
+  onUsage?: (usage: LLMUsage) => void;
   onTurn?: () => void;
   abortSignal?: AbortSignal;
   sessionMemoryPath?: string;
@@ -117,9 +118,12 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       tools: config.tools,
     });
 
+    // Report usage
+    if (response.usage) params.onUsage?.(response.usage);
+
     // Handle tool calls
     if (response.toolCalls.length > 0) {
-      // Append assistant message with tool_calls metadata
+      // Append assistant message with tool_calls metadata + usage
       await session.append({
         ts: new Date().toISOString(),
         role: "assistant",
@@ -130,6 +134,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
             name: tc.name,
             arguments: tc.arguments,
           })),
+          ...(response.usage ? { usage: response.usage } : {}),
         },
       });
 
@@ -156,6 +161,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
       ts: new Date().toISOString(),
       role: "assistant",
       content: text,
+      ...(response.usage ? { meta: { usage: response.usage } } : {}),
     });
     onAssistantMessage?.(text);
     return text;

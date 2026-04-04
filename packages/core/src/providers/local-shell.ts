@@ -5,6 +5,7 @@ import {
   appendFile as fsAppendFile,
   mkdir as fsMkdir,
   readdir as fsReaddir,
+  stat as fsStat,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Shell, ExecResult } from "./shell.js";
@@ -46,6 +47,11 @@ export class LocalShell implements Shell {
 
   async mkdir(path: string): Promise<void> {
     await fsMkdir(path, { recursive: true });
+  }
+
+  async stat(path: string): Promise<{ mtimeMs: number; size: number }> {
+    const s = await fsStat(path);
+    return { mtimeMs: s.mtimeMs, size: s.size };
   }
 
   async listFiles(dir: string): Promise<string[]> {

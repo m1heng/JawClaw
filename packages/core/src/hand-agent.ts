@@ -79,9 +79,10 @@ export class HandAgent {
     );
     const config = { ...this.config, systemPrompt };
 
+    const fileMtimes = new Map<string, number>();
     const tools: ToolRegistry = {
-      ...createReadTools(this.shell, memRoot),
-      ...createHandTools(this.shell, this.services, this.task.replyTo),
+      ...createReadTools(this.shell, memRoot, fileMtimes),
+      ...createHandTools(this.shell, this.services, this.task.replyTo, fileMtimes),
     };
 
     try {

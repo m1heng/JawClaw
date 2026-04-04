@@ -1,9 +1,15 @@
 import type { ToolDefinition, ToolCall } from "./types.js";
 
+export type LLMUsage = {
+  promptTokens: number;
+  completionTokens: number;
+};
+
 export type LLMResponse = {
   content: string | null;
   toolCalls: ToolCall[];
   stopReason?: "end_turn" | "tool_use" | "max_tokens" | "content_filter" | string;
+  usage?: LLMUsage;
 };
 
 export type LLMMessage =

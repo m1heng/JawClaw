@@ -14,6 +14,7 @@ export function createHandTools(
   shell: Shell,
   services: HandServices,
   taskReplyTo?: string,
+  fileMtimes?: Map<string, number>,
 ): ToolRegistry {
   return {
     // WRITE group
@@ -22,6 +23,13 @@ export function createHandTools(
       const content = args.content as string;
       try {
         await shell.writeFile(path, content);
+        // Update tracked mtime after write
+        if (fileMtimes) {
+          try {
+            const s = await shell.stat(path);
+            fileMtimes.set(path, s.mtimeMs);
+          } catch { /* non-fatal */ }
+        }
         return `File written: ${path}`;
       } catch (err) {
         return errMsg("write_file", err);
@@ -33,12 +41,29 @@ export function createHandTools(
       const oldStr = args.old_string as string;
       const newStr = args.new_string as string;
       try {
+        // Staleness check: if we previously read this file, verify it hasn't changed
+        if (fileMtimes?.has(path)) {
+          try {
+            const current = await shell.stat(path);
+            const recorded = fileMtimes.get(path)!;
+            if (current.mtimeMs !== recorded) {
+              return `Error: ${path} was modified since last read. Use read_file to get the latest content before editing.`;
+            }
+          } catch { /* stat failure → skip check, proceed with edit */ }
+        }
         const content = await shell.readFile(path);
         const count = content.split(oldStr).length - 1;
         if (count === 0) return `Error: old_string not found in ${path}`;
         if (count > 1)
           return `Error: old_string appears ${count} times in ${path}. Must be unique.`;
         await shell.writeFile(path, content.replace(oldStr, newStr));
+        // Update tracked mtime after successful edit
+        if (fileMtimes) {
+          try {
+            const s = await shell.stat(path);
+            fileMtimes.set(path, s.mtimeMs);
+          } catch { /* non-fatal */ }
+        }
         return `File edited: ${path}`;
       } catch (err) {
         return errMsg("edit_file", err);
