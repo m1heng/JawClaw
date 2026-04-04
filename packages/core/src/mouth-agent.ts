@@ -170,7 +170,11 @@ export class MouthAgent {
     }
   }
 
-  /** Match a /command and return its handler, or null. */
+  /**
+   * Match a /command and return its handler, or null.
+   * Note: commands are currently available to all channels (single-owner design).
+   * Multi-tenant deployments should add auth before exposing commands.
+   */
   private matchCommand(text: string): (() => Promise<string>) | null {
     if (!text.startsWith("/")) return null;
     const [cmd] = text.split(/\s+/, 1);
@@ -200,6 +204,10 @@ export class MouthAgent {
   }
 
   private async cmdClear(): Promise<string> {
+    // Refuse if Hand agents are still running
+    if (this.activeHands.size > 0) {
+      return `Cannot clear: ${this.activeHands.size} task(s) still running. Cancel them first.`;
+    }
     // Archive current session file, start fresh
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const archivePath = join(this.sessionsDir, `mouth_${ts}.jsonl`);
@@ -208,7 +216,10 @@ export class MouthAgent {
       await this.shell.writeFile(archivePath, content);
     } catch { /* no existing session to archive */ }
     await this.shell.writeFile(this.session.filePath, "");
+    // Reset all checkpoints (in-memory + persisted)
     this.lastSessionMemoryCheckpoint = 0;
+    const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
+    await this.shell.writeFile(join(memRoot, ".session-memory-checkpoint"), "0").catch(() => {});
     return `Session cleared. Previous session archived to ${archivePath}`;
   }
 
@@ -486,11 +497,17 @@ export class MouthAgent {
       } catch { /* no checkpoint */ }
 
       // Gate 1: time
-      if (Date.now() - lastTs < CONSOLIDATION_INTERVAL_MS) return;
+      if (Date.now() - lastTs < CONSOLIDATION_INTERVAL_MS) {
+        this.consolidating = false;
+        return;
+      }
 
       // Gate 2: message count
       const allMessages = await this.session.readAll();
-      if (allMessages.length - lastMsgCount < CONSOLIDATION_MSG_THRESHOLD) return;
+      if (allMessages.length - lastMsgCount < CONSOLIDATION_MSG_THRESHOLD) {
+        this.consolidating = false;
+        return;
+      }
 
       // Dispatch consolidation Hand
       const taskId = generateId();
