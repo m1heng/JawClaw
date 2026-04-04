@@ -34,7 +34,7 @@ export function createReadTools(
       try {
         const content = await shell.readFile(path);
         // Track mtime for staleness detection by edit_file
-        if (fileMtimes) {
+        if (fileMtimes && shell.stat) {
           try {
             const s = await shell.stat(path);
             fileMtimes.set(path, s.mtimeMs);

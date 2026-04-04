@@ -208,6 +208,10 @@ export class MouthAgent {
     if (this.activeHands.size > 0) {
       return `Cannot clear: ${this.activeHands.size} task(s) still running. Cancel them first.`;
     }
+    // Refuse if the Mouth loop is still processing
+    if (this.loopRunning) {
+      return `Cannot clear: Mouth is still processing. Try again shortly.`;
+    }
     // Archive current session file, start fresh
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const archivePath = join(this.sessionsDir, `mouth_${ts}.jsonl`);
@@ -216,10 +220,11 @@ export class MouthAgent {
       await this.shell.writeFile(archivePath, content);
     } catch { /* no existing session to archive */ }
     await this.shell.writeFile(this.session.filePath, "");
-    // Reset all checkpoints (in-memory + persisted)
+    // Reset all checkpoints and session memory (in-memory + persisted)
     this.lastSessionMemoryCheckpoint = 0;
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
     await this.shell.writeFile(join(memRoot, ".session-memory-checkpoint"), "0").catch(() => {});
+    await this.shell.writeFile(join(memRoot, "session-memory.md"), "").catch(() => {});
     return `Session cleared. Previous session archived to ${archivePath}`;
   }
 
@@ -311,6 +316,7 @@ export class MouthAgent {
           llm: this.handLlm,
           services: this.handServices,
           shell: this.shell,
+          onUsage: (usage) => this.logUsage(usage, "hand"),
         });
 
         this.activeHands.set(taskId, hand);
@@ -363,7 +369,7 @@ export class MouthAgent {
       tools,
       sessionMemoryPath,
       shell: this.shell,
-      onUsage: (usage) => this.logUsage(usage),
+      onUsage: (usage) => this.logUsage(usage, "mouth"),
       // Assistant text is internal reasoning — not sent to any channel
     });
   }
@@ -454,13 +460,14 @@ export class MouthAgent {
   }
 
   /** Append LLM usage to .jawclaw/usage.jsonl (fire-and-forget). */
-  private logUsage(usage: LLMUsage): void {
+  private logUsage(usage: LLMUsage, agent: "mouth" | "hand"): void {
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
     const usagePath = join(memRoot, "..", "usage.jsonl");
+    const model = agent === "mouth" ? this.config.model : this.handConfig.model;
     const entry = JSON.stringify({
       ts: new Date().toISOString(),
-      agent: "mouth",
-      model: this.config.model,
+      agent,
+      model,
       ...usage,
     });
     this.shell.appendFile(usagePath, entry + "\n").catch(() => {});

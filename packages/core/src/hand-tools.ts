@@ -24,7 +24,7 @@ export function createHandTools(
       try {
         await shell.writeFile(path, content);
         // Update tracked mtime after write
-        if (fileMtimes) {
+        if (fileMtimes && shell.stat) {
           try {
             const s = await shell.stat(path);
             fileMtimes.set(path, s.mtimeMs);
@@ -42,7 +42,7 @@ export function createHandTools(
       const newStr = args.new_string as string;
       try {
         // Staleness check: if we previously read this file, verify it hasn't changed
-        if (fileMtimes?.has(path)) {
+        if (fileMtimes?.has(path) && shell.stat) {
           try {
             const current = await shell.stat(path);
             const recorded = fileMtimes.get(path)!;
@@ -58,7 +58,7 @@ export function createHandTools(
           return `Error: old_string appears ${count} times in ${path}. Must be unique.`;
         await shell.writeFile(path, content.replace(oldStr, newStr));
         // Update tracked mtime after successful edit
-        if (fileMtimes) {
+        if (fileMtimes && shell.stat) {
           try {
             const s = await shell.stat(path);
             fileMtimes.set(path, s.mtimeMs);

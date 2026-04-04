@@ -19,5 +19,5 @@ export type Shell = {
   appendFile(path: string, content: string): Promise<void>;
   mkdir(path: string): Promise<void>;
   listFiles(dir: string): Promise<string[]>;
-  stat(path: string): Promise<FileStat>;
+  stat?(path: string): Promise<FileStat>;
 };
