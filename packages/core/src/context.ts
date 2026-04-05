@@ -157,11 +157,14 @@ function isFailedResult(content: string): boolean {
  * is before the boundary are eligible for collapse. Groups at or after
  * the boundary (the "recent zone") are preserved intact for cache safety.
  *
- * When `processedCount` is set, messages before that index are passed
- * through unchanged (they were already collapsed in a previous turn).
- * Only new messages between processedCount and boundaryIndex are evaluated.
- * Returns `{ messages, processedCount }` so the caller can persist the
- * new processedCount across turns.
+ * When `processedCount` is set, the first `processedCount` INPUT messages
+ * are passed through unchanged (they were already collapsed in a previous
+ * turn). Only new messages beyond that point are evaluated for collapse.
+ *
+ * Returns `{ messages, processedCount }` where processedCount tracks how
+ * many INPUT messages have been processed so far. This value is always
+ * measured against the input array, not the (potentially shorter) output,
+ * so it stays correct across turns even when messages are collapsed.
  */
 export function collapseFailedGroups(
   messages: ChatMessage[],
@@ -170,15 +173,18 @@ export function collapseFailedGroups(
   const boundary = opts?.boundaryIndex;
   const alreadyProcessed = opts?.processedCount ?? 0;
 
-  // Messages already processed in a previous turn — pass through verbatim
-  const frozen = messages.slice(0, alreadyProcessed);
-  const rest = messages.slice(alreadyProcessed);
+  // Messages already processed in a previous turn — pass through verbatim.
+  // These may be fewer than alreadyProcessed if earlier turns collapsed some,
+  // so clamp to the actual array length.
+  const frozenEnd = Math.min(alreadyProcessed, messages.length);
+  const frozen = messages.slice(0, frozenEnd);
+  const rest = messages.slice(frozenEnd);
 
   const units = groupIntoUnits(rest);
   const result: ChatMessage[][] = [];
   let failedRun: ChatMessage[][] = [];
-  // messageOffset is relative to the FULL messages array
-  let messageOffset = alreadyProcessed;
+  // messageOffset tracks position in the FULL input messages array
+  let messageOffset = frozenEnd;
 
   const isFailedGroup = (unit: ChatMessage[]): boolean => {
     if (unit.length < 2 || unit[0].role !== "assistant" || !unit[0].meta?.tool_calls) {
@@ -226,7 +232,8 @@ export function collapseFailedGroups(
   flushFailed();
 
   const collapsed = [...frozen, ...result.flat()];
-  return { messages: collapsed, processedCount: collapsed.length };
+  // processedCount tracks INPUT messages consumed, not output length
+  return { messages: collapsed, processedCount: messageOffset };
 }
 
 /** Count the number of tool-call groups in a message array. */

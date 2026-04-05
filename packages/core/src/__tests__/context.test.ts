@@ -380,6 +380,7 @@ describe("collapseFailedGroups with boundaryIndex", () => {
     ];
     const r1 = collapseFailedGroups(msgs);
     expect(r1.messages).toEqual(msgs);
+    expect(r1.processedCount).toBe(msgs.length); // 4 input messages processed
 
     // A 3rd failed group arrives — but previous messages are frozen
     const msgs2: ChatMessage[] = [
@@ -389,6 +390,33 @@ describe("collapseFailedGroups with boundaryIndex", () => {
     const r2 = collapseFailedGroups(msgs2, { processedCount: r1.processedCount });
     // First 4 messages (groups 1-2) frozen, only group 3 is new (1 failure, not collapsed)
     expect(r2.messages).toEqual(msgs2);
+  });
+
+  it("processedCount tracks input length even after collapse", () => {
+    // 3 failed groups → collapsed on first call
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const r1 = collapseFailedGroups(msgs);
+    expect(r1.messages).toHaveLength(1); // collapsed summary
+    // processedCount must be 6 (input messages), NOT 1 (output length)
+    expect(r1.processedCount).toBe(6);
+
+    // Next turn: same input + 1 new success group
+    const msgs2: ChatMessage[] = [
+      ...msgs,
+      ...toolGroup("read_file", "success", "4"),
+    ];
+    const r2 = collapseFailedGroups(msgs2, { processedCount: r1.processedCount });
+    // The first 6 input messages are frozen (passed through as-is from previous output).
+    // The frozen slice is messages[0..5] which are the same 3 failed groups,
+    // but since processedCount=6 > messages.length trick: frozen = msgs2.slice(0,6) = all 3 groups verbatim.
+    // The new group is processed fresh and kept intact.
+    // Result: 3 original groups (6 msgs) + 1 success group (2 msgs) = 8
+    expect(r2.messages).toHaveLength(8);
+    expect(r2.messages[r2.messages.length - 1].content).toBe("success");
   });
 });
 
