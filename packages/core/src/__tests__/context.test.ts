@@ -177,8 +177,8 @@ describe("collapseFailedGroups", () => {
       { ts: "1", role: "user", content: "hello" },
       ...toolGroup("read_file", "file contents", "2"),
     ];
-    const result = collapseFailedGroups(msgs);
-    expect(result).toEqual(msgs);
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("does not collapse fewer than 3 consecutive failed groups", () => {
@@ -186,8 +186,8 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("grep", "(no matches)", "1"),
       ...toolGroup("grep", "(no matches)", "2"),
     ];
-    const result = collapseFailedGroups(msgs);
-    expect(result).toEqual(msgs);
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("collapses 3+ consecutive failed groups", () => {
@@ -196,13 +196,13 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("grep", "Error: something", "2"),
       ...toolGroup("glob", "(no files found)", "3"),
     ];
-    const result = collapseFailedGroups(msgs);
+    const { messages } = collapseFailedGroups(msgs);
     // Should be collapsed into 1 message
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe("user");
-    expect(result[0].content).toContain("3 tool-call groups collapsed");
-    expect(result[0].content).toContain("grep");
-    expect(result[0].content).toContain("glob");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("user");
+    expect(messages[0].content).toContain("3 tool-call groups collapsed");
+    expect(messages[0].content).toContain("grep");
+    expect(messages[0].content).toContain("glob");
   });
 
   it("preserves success groups around collapsed failures", () => {
@@ -214,15 +214,15 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("grep", "(no matches)", "4"),
       ...toolGroup("read_file", "more success", "5"),
     ];
-    const result = collapseFailedGroups(msgs);
+    const { messages } = collapseFailedGroups(msgs);
     // user + success group(2) + collapsed(1) + success group(2) = 6
-    expect(result).toHaveLength(6);
-    expect(result[0].content).toBe("start");
-    expect(result[1].content).toBe("");  // assistant with tool_calls
-    expect(result[2].content).toBe("success content");
-    expect(result[3].content).toContain("3 tool-call groups collapsed");
-    expect(result[4].content).toBe(""); // assistant
-    expect(result[5].content).toBe("more success");
+    expect(messages).toHaveLength(6);
+    expect(messages[0].content).toBe("start");
+    expect(messages[1].content).toBe("");  // assistant with tool_calls
+    expect(messages[2].content).toBe("success content");
+    expect(messages[3].content).toContain("3 tool-call groups collapsed");
+    expect(messages[4].content).toBe(""); // assistant
+    expect(messages[5].content).toBe("more success");
   });
 
   it("does not collapse empty-result groups (silent success)", () => {
@@ -231,9 +231,9 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("run_command", "", "2"),
       ...toolGroup("run_command", "", "3"),
     ];
-    const result = collapseFailedGroups(msgs);
+    const { messages } = collapseFailedGroups(msgs);
     // Empty results are silent successes (mkdir, touch, git add), NOT failures
-    expect(result).toEqual(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("detects all failure patterns", () => {
@@ -244,9 +244,9 @@ describe("collapseFailedGroups", () => {
         ...toolGroup("test", pattern, "2"),
         ...toolGroup("test", pattern, "3"),
       ];
-      const result = collapseFailedGroups(msgs);
-      expect(result).toHaveLength(1);
-      expect(result[0].content).toContain("collapsed");
+      const { messages } = collapseFailedGroups(msgs);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toContain("collapsed");
     }
   });
 
@@ -256,8 +256,8 @@ describe("collapseFailedGroups", () => {
       { ts: "2", role: "user", content: "" },
       { ts: "3", role: "user", content: "" },
     ];
-    const result = collapseFailedGroups(msgs);
-    expect(result).toEqual(msgs);
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toEqual(msgs);
   });
 });
 
@@ -320,19 +320,17 @@ describe("buildSystemPrompt", () => {
 
 describe("collapseFailedGroups with boundaryIndex", () => {
   it("does not collapse failed groups past the boundary", () => {
-    // 4 failed groups: groups at indices 0-1 (before boundary), groups at 2-3 (after)
     const msgs: ChatMessage[] = [
       ...toolGroup("grep", "(no matches)", "1"),
       ...toolGroup("grep", "(no matches)", "2"),
       ...toolGroup("grep", "(no matches)", "3"),
       ...toolGroup("grep", "(no matches)", "4"),
     ];
-    // Boundary at message index 4 (after group 1, which is msgs[0..3])
-    const result = collapseFailedGroups(msgs, { boundaryIndex: 4 });
-    // Groups before boundary: only 2 consecutive failures → not collapsed (threshold is 3)
+    // Boundary at message index 4 (after group 1)
+    const { messages } = collapseFailedGroups(msgs, { boundaryIndex: 4 });
+    // Groups before boundary: only 2 failures → not collapsed
     // Groups after boundary: untouched
-    // So all messages remain
-    expect(result).toEqual(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("collapses only within the truncated zone", () => {
@@ -345,12 +343,12 @@ describe("collapseFailedGroups with boundaryIndex", () => {
       ...toolGroup("grep", "(no matches)", "5"),
       ...toolGroup("grep", "(no matches)", "6"),
     ];
-    const result = collapseFailedGroups(msgs, { boundaryIndex: 6 });
+    const { messages } = collapseFailedGroups(msgs, { boundaryIndex: 6 });
     // Before boundary: 3 failed groups → collapsed into 1
     // After boundary: 3 failed groups → NOT collapsed (past boundary)
-    expect(result.length).toBe(1 + 6); // 1 collapsed + 6 intact messages
-    expect(result[0].content).toContain("3 tool-call groups collapsed");
-    expect(result[1].role).toBe("assistant"); // first group after boundary
+    expect(messages.length).toBe(1 + 6);
+    expect(messages[0].content).toContain("3 tool-call groups collapsed");
+    expect(messages[1].role).toBe("assistant");
   });
 
   it("boundary at 0 prevents all collapsing", () => {
@@ -359,8 +357,8 @@ describe("collapseFailedGroups with boundaryIndex", () => {
       ...toolGroup("grep", "(no matches)", "2"),
       ...toolGroup("grep", "(no matches)", "3"),
     ];
-    const result = collapseFailedGroups(msgs, { boundaryIndex: 0 });
-    expect(result).toEqual(msgs);
+    const { messages } = collapseFailedGroups(msgs, { boundaryIndex: 0 });
+    expect(messages).toEqual(msgs);
   });
 
   it("undefined boundary behaves like original (collapse everything)", () => {
@@ -369,9 +367,28 @@ describe("collapseFailedGroups with boundaryIndex", () => {
       ...toolGroup("grep", "(no matches)", "2"),
       ...toolGroup("grep", "(no matches)", "3"),
     ];
-    const result = collapseFailedGroups(msgs);
-    expect(result).toHaveLength(1);
-    expect(result[0].content).toContain("collapsed");
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain("collapsed");
+  });
+
+  it("processedCount freezes already-collapsed messages", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      // On first call, only 2 failed groups — not collapsed
+    ];
+    const r1 = collapseFailedGroups(msgs);
+    expect(r1.messages).toEqual(msgs);
+
+    // A 3rd failed group arrives — but previous messages are frozen
+    const msgs2: ChatMessage[] = [
+      ...msgs,
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const r2 = collapseFailedGroups(msgs2, { processedCount: r1.processedCount });
+    // First 4 messages (groups 1-2) frozen, only group 3 is new (1 failure, not collapsed)
+    expect(r2.messages).toEqual(msgs2);
   });
 });
 

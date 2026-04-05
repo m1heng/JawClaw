@@ -156,16 +156,29 @@ function isFailedResult(content: string): boolean {
  * When `boundaryIndex` is set, only groups whose first message index
  * is before the boundary are eligible for collapse. Groups at or after
  * the boundary (the "recent zone") are preserved intact for cache safety.
+ *
+ * When `processedCount` is set, messages before that index are passed
+ * through unchanged (they were already collapsed in a previous turn).
+ * Only new messages between processedCount and boundaryIndex are evaluated.
+ * Returns `{ messages, processedCount }` so the caller can persist the
+ * new processedCount across turns.
  */
 export function collapseFailedGroups(
   messages: ChatMessage[],
-  opts?: { boundaryIndex?: number },
-): ChatMessage[] {
-  const units = groupIntoUnits(messages);
+  opts?: { boundaryIndex?: number; processedCount?: number },
+): { messages: ChatMessage[]; processedCount: number } {
   const boundary = opts?.boundaryIndex;
+  const alreadyProcessed = opts?.processedCount ?? 0;
+
+  // Messages already processed in a previous turn — pass through verbatim
+  const frozen = messages.slice(0, alreadyProcessed);
+  const rest = messages.slice(alreadyProcessed);
+
+  const units = groupIntoUnits(rest);
   const result: ChatMessage[][] = [];
   let failedRun: ChatMessage[][] = [];
-  let messageOffset = 0;
+  // messageOffset is relative to the FULL messages array
+  let messageOffset = alreadyProcessed;
 
   const isFailedGroup = (unit: ChatMessage[]): boolean => {
     if (unit.length < 2 || unit[0].role !== "assistant" || !unit[0].meta?.tool_calls) {
@@ -212,7 +225,8 @@ export function collapseFailedGroups(
   }
   flushFailed();
 
-  return result.flat();
+  const collapsed = [...frozen, ...result.flat()];
+  return { messages: collapsed, processedCount: collapsed.length };
 }
 
 /** Count the number of tool-call groups in a message array. */

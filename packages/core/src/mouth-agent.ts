@@ -103,7 +103,7 @@ export class MouthAgent {
   private extractingMemory = false;
   private consolidating = false;
   private lastConsolidationTs = 0;
-  private compressionState: CompressionState = { microcompactWatermark: 0 };
+  private compressionState: CompressionState = { microcompactWatermark: 0, collapseProcessedCount: 0 };
 
   constructor(params: {
     sessionsDir: string;
@@ -224,7 +224,7 @@ export class MouthAgent {
     await this.shell.writeFile(this.session.filePath, "");
     // Reset all checkpoints, session memory, and compression state
     this.lastSessionMemoryCheckpoint = 0;
-    this.compressionState = { microcompactWatermark: 0 };
+    this.compressionState = { microcompactWatermark: 0, collapseProcessedCount: 0 };
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
     await this.shell.writeFile(join(memRoot, ".session-memory-checkpoint"), "0").catch(() => {});
     await this.shell.writeFile(join(memRoot, "session-memory.md"), "").catch(() => {});

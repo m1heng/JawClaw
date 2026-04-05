@@ -35,7 +35,7 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
   const maxTurns = config.maxTurns ?? 20;
 
   // Initialize compression state (in-place mutation persists across drain cycles)
-  const compState: CompressionState = params.compressionState ?? { microcompactWatermark: 0 };
+  const compState: CompressionState = params.compressionState ?? { microcompactWatermark: 0, collapseProcessedCount: 0 };
   if (!params.compressionState) params.compressionState = compState;
 
   // Cache observability: track previous cache read tokens for break detection
@@ -76,15 +76,21 @@ export async function runReactLoop(params: ReactLoopParams): Promise<string> {
     if (snipDropped > 0) {
       const droppedGroups = countToolGroups(history.slice(0, snipDropped));
       compState.microcompactWatermark = Math.max(0, compState.microcompactWatermark - droppedGroups);
+      compState.collapseProcessedCount = Math.max(0, compState.collapseProcessedCount - snipDropped);
     }
 
     // L3: Microcompact — truncate old tool results (watermark-based, cache-safe)
     const { messages: microcompacted, watermark: newWatermark } =
       microcompactToolResults(snipped, { watermark: compState.microcompactWatermark });
     compState.microcompactWatermark = newWatermark;
-    // L4: Collapse — fold consecutive failed groups (only in truncated zone)
+    // L4: Collapse — fold consecutive failed groups (only new messages in truncated zone)
     const boundaryIndex = watermarkToMessageIndex(microcompacted, newWatermark);
-    const collapsed = collapseFailedGroups(microcompacted, { boundaryIndex });
+    const { messages: collapsed, processedCount: newCollapseProcessed } =
+      collapseFailedGroups(microcompacted, {
+        boundaryIndex,
+        processedCount: compState.collapseProcessedCount,
+      });
+    compState.collapseProcessedCount = newCollapseProcessed;
     // L5: Full compact — token budget + session memory
     const { kept, trimmedCount, sessionMemory } = await compactHistoryWithMemory(
       collapsed, availableBudget,
@@ -267,21 +273,27 @@ async function callLLMWithRecovery(
       }
 
       if (errorType === "prompt_too_long" && retries < MAX_LLM_RETRIES) {
-        // Emergency: keep system prompt + last 50% of conversation.
+        // Emergency: keep all leading system messages + last 50% of conversation.
+        // Preserve stable + dynamic system prompts so the model retains context.
+        const systemPrefix = currentMessages.filter((m, i) =>
+          m.role === "system" && (i === 0 || currentMessages[i - 1]?.role === "system"),
+        );
+        const conversationStart = systemPrefix.length;
+        const conversationMsgs = currentMessages.slice(conversationStart);
         // Find a safe cut point that doesn't split tool-call groups:
         // never start with an orphaned "tool" message.
-        const half = Math.floor(currentMessages.length / 2);
-        let cutIdx = Math.max(half, 1);
-        while (cutIdx < currentMessages.length && currentMessages[cutIdx].role === "tool") {
+        const half = Math.floor(conversationMsgs.length / 2);
+        let cutIdx = Math.max(half, 0);
+        while (cutIdx < conversationMsgs.length && conversationMsgs[cutIdx].role === "tool") {
           cutIdx++;
         }
         currentMessages = [
-          currentMessages[0],
+          ...systemPrefix,
           {
             role: "system" as const,
             content: "[Emergency context reduction: older messages dropped due to token limit]",
           },
-          ...currentMessages.slice(cutIdx),
+          ...conversationMsgs.slice(cutIdx),
         ];
         continue;
       }
