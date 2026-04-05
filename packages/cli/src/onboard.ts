@@ -1,5 +1,6 @@
 import * as p from "@clack/prompts";
 import { mkdir, writeFile } from "node:fs/promises";
+import { initRegistry, listChannels, getChannel } from "@jawclaw/channels";
 import { saveConfig } from "./config.js";
 import type { Config } from "./config.js";
 
@@ -17,7 +18,7 @@ const DEFAULT_INSTRUCTIONS = `# Instructions
 - Keep replies concise — this is IM, not email
 `;
 
-export async function onboard(): Promise<Config> {
+export async function onboard(existingConfig?: Config | null): Promise<Config> {
   p.intro("🐾 JawClaw — first time setup");
 
   const providerType = await p.select({
@@ -53,52 +54,27 @@ export async function onboard(): Promise<Config> {
     { onCancel: () => process.exit(0) },
   );
 
+  // Channel selection — driven by registry (includes external extensions if config exists)
+  await initRegistry(existingConfig?.extensions);
+  const extensions = listChannels();
+
   const channelType = await p.select({
     message: "Channel type",
-    options: [
-      { value: "telegram", label: "Telegram" },
-      { value: "weixin", label: "WeChat (微信)" },
-      { value: "feishu", label: "Feishu (飞书)" },
-    ],
+    options: extensions.map((e) => ({ value: e.name, label: e.label })),
   });
   if (p.isCancel(channelType)) process.exit(0);
 
-  let channel: { token: string; appSecret?: string };
+  const ext = getChannel(channelType as string)!;
+  const channelAnswers: Record<string, string> = {};
 
-  if (channelType === "feishu") {
-    const creds = await p.group(
-      {
-        appId: () =>
-          p.text({
-            message: "Feishu App ID",
-            placeholder: "cli_xxxx",
-            validate: (v) => (!v ? "Required" : undefined),
-          }),
-        appSecret: () =>
-          p.text({
-            message: "Feishu App Secret",
-            placeholder: "xxxx",
-            validate: (v) => (!v ? "Required" : undefined),
-          }),
-      },
-      { onCancel: () => process.exit(0) },
-    );
-    channel = { token: creds.appId as string, appSecret: creds.appSecret as string };
-  } else {
-    const placeholder =
-      channelType === "telegram" ? "123456:ABC-DEF..." : "iLink bot token";
-    const token = await p.group(
-      {
-        token: () =>
-          p.text({
-            message: "Bot Token",
-            placeholder,
-            validate: (v) => (!v ? "Required" : undefined),
-          }),
-      },
-      { onCancel: () => process.exit(0) },
-    );
-    channel = { token: token.token as string };
+  for (const field of ext.configFields) {
+    const val = await p.text({
+      message: field.label,
+      placeholder: field.placeholder,
+      validate: field.required ? (v) => (!v ? "Required" : undefined) : undefined,
+    });
+    if (p.isCancel(val)) process.exit(0);
+    channelAnswers[field.key] = val as string;
   }
 
   const defaultModels: Record<string, { mouth: string; hand: string }> = {
@@ -136,9 +112,9 @@ export async function onboard(): Promise<Config> {
     },
     channels: [{
       type: channelType as string,
-      token: channel.token,
-      ...(channel.appSecret ? { appSecret: channel.appSecret } : {}),
+      ...channelAnswers,
     }],
+    ...(existingConfig?.extensions?.length ? { extensions: existingConfig.extensions } : {}),
   };
 
   // Save config

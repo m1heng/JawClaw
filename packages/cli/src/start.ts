@@ -7,7 +7,7 @@ import {
   createAnthropicClient,
 } from "@jawclaw/core";
 import type { LLMClient, HandServices } from "@jawclaw/core";
-import { TelegramChannel, WeixinChannel, FeishuChannel } from "@jawclaw/channels";
+import { initRegistry, getChannel, createChannel } from "@jawclaw/channels";
 import type { Channel } from "@jawclaw/channels";
 import type { Config, ProviderConfig } from "./config.js";
 
@@ -55,7 +55,6 @@ export async function startBot(config: Config) {
   const sessionsDir = ".jawclaw/sessions";
 
   // Multi-channel router: "channel:chatId" → channel instance
-  // Keyed by channel name + chatId to avoid cross-channel ID collisions.
   const channelRouter = new Map<string, Channel>();
 
   const routerKey = (channel: string, chatId: string) => `${channel}:${chatId}`;
@@ -63,7 +62,6 @@ export async function startBot(config: Config) {
   const sendMessage = async (compositeId: string, text: string) => {
     const ch = channelRouter.get(compositeId);
     if (ch) {
-      // Extract original chatId (strip "channel:" prefix)
       const chatId = compositeId.substring(compositeId.indexOf(":") + 1);
       await ch.sendReply(chatId, text);
     } else {
@@ -96,21 +94,26 @@ export async function startBot(config: Config) {
     shell,
   });
 
-  // Start all configured channels
+  // Initialize extension registry (built-ins + external)
+  await initRegistry(config.extensions);
+
+  // Start all configured channels — no more switch/if-else
   const activeChannels: Channel[] = [];
 
   for (const cc of channelConfigs) {
-    let ch: Channel | null = null;
-
-    if (cc.type === "telegram") {
-      ch = new TelegramChannel(cc.token);
-    } else if (cc.type === "weixin") {
-      ch = new WeixinChannel(cc.token);
-    } else if (cc.type === "feishu") {
-      ch = new FeishuChannel(cc.token, cc.appSecret!);
+    const ext = getChannel(cc.type);
+    if (!ext) {
+      console.error(`Unknown channel type: "${cc.type}" — is the extension installed?`);
+      continue;
     }
 
-    if (!ch) continue;
+    let ch: Channel;
+    try {
+      ch = createChannel(ext, cc);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      continue;
+    }
 
     const channel = ch;
     channel.onMessage(async (msg) => {
