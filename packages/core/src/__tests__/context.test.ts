@@ -5,8 +5,11 @@ import {
   compactHistory,
   snipOldMessages,
   collapseFailedGroups,
+  watermarkToMessageIndex,
   buildSystemPrompt,
   mouthBootstrapFiles,
+  mouthStableBootstrapFiles,
+  mouthDynamicBootstrapFiles,
   handBootstrapFiles,
 } from "../context.js";
 import { MockShell } from "./fixtures/mock-shell.js";
@@ -315,14 +318,116 @@ describe("buildSystemPrompt", () => {
   });
 });
 
+describe("collapseFailedGroups with boundaryIndex", () => {
+  it("does not collapse failed groups past the boundary", () => {
+    // 4 failed groups: groups at indices 0-1 (before boundary), groups at 2-3 (after)
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+      ...toolGroup("grep", "(no matches)", "4"),
+    ];
+    // Boundary at message index 4 (after group 1, which is msgs[0..3])
+    const result = collapseFailedGroups(msgs, { boundaryIndex: 4 });
+    // Groups before boundary: only 2 consecutive failures → not collapsed (threshold is 3)
+    // Groups after boundary: untouched
+    // So all messages remain
+    expect(result).toEqual(msgs);
+  });
+
+  it("collapses only within the truncated zone", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+      // boundary here (message index 6)
+      ...toolGroup("grep", "(no matches)", "4"),
+      ...toolGroup("grep", "(no matches)", "5"),
+      ...toolGroup("grep", "(no matches)", "6"),
+    ];
+    const result = collapseFailedGroups(msgs, { boundaryIndex: 6 });
+    // Before boundary: 3 failed groups → collapsed into 1
+    // After boundary: 3 failed groups → NOT collapsed (past boundary)
+    expect(result.length).toBe(1 + 6); // 1 collapsed + 6 intact messages
+    expect(result[0].content).toContain("3 tool-call groups collapsed");
+    expect(result[1].role).toBe("assistant"); // first group after boundary
+  });
+
+  it("boundary at 0 prevents all collapsing", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const result = collapseFailedGroups(msgs, { boundaryIndex: 0 });
+    expect(result).toEqual(msgs);
+  });
+
+  it("undefined boundary behaves like original (collapse everything)", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const result = collapseFailedGroups(msgs);
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toContain("collapsed");
+  });
+});
+
+describe("watermarkToMessageIndex", () => {
+  it("returns 0 when watermark is 0", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("read_file", "content", "1"),
+      { ts: "2", role: "user", content: "hello" },
+    ];
+    expect(watermarkToMessageIndex(msgs, 0)).toBe(0);
+  });
+
+  it("maps watermark to correct message index", () => {
+    const msgs: ChatMessage[] = [
+      { ts: "0", role: "user", content: "q1" },     // idx 0
+      ...toolGroup("read_file", "content", "1"),      // idx 1-2 (group 0)
+      { ts: "3", role: "user", content: "q2" },      // idx 3
+      ...toolGroup("grep", "matches", "4"),           // idx 4-5 (group 1)
+      ...toolGroup("glob", "files", "6"),             // idx 6-7 (group 2)
+    ];
+    // watermark=1 → after group 0 → message index 3
+    expect(watermarkToMessageIndex(msgs, 1)).toBe(3);
+    // watermark=2 → after group 1 → message index 6
+    expect(watermarkToMessageIndex(msgs, 2)).toBe(6);
+    // watermark=3 → after group 2 → message index 8
+    expect(watermarkToMessageIndex(msgs, 3)).toBe(8);
+  });
+
+  it("returns total message count when watermark exceeds groups", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("read_file", "content", "1"),
+    ];
+    expect(watermarkToMessageIndex(msgs, 5)).toBe(2);
+  });
+});
+
 describe("bootstrapFiles", () => {
-  it("mouthBootstrapFiles returns SOUL + INSTRUCTIONS + MEMORY", () => {
+  it("mouthBootstrapFiles returns SOUL + INSTRUCTIONS + MEMORY (deprecated compat)", () => {
     const files = mouthBootstrapFiles("/ws/memory");
     const labels = files.map((f) => f.label);
     expect(labels).toContain("SOUL.md");
     expect(labels).toContain("INSTRUCTIONS.md");
     expect(labels).toContain("MEMORY.md");
-    expect(labels).not.toContain("USER.md");
+    expect(labels).toContain("Session Memory");
+  });
+
+  it("mouthStableBootstrapFiles returns SOUL + INSTRUCTIONS only", () => {
+    const files = mouthStableBootstrapFiles("/ws/memory");
+    const labels = files.map((f) => f.label);
+    expect(labels).toEqual(["SOUL.md", "INSTRUCTIONS.md"]);
+  });
+
+  it("mouthDynamicBootstrapFiles returns MEMORY + Session Memory only", () => {
+    const files = mouthDynamicBootstrapFiles("/ws/memory");
+    const labels = files.map((f) => f.label);
+    expect(labels).toEqual(["MEMORY.md", "Session Memory"]);
   });
 
   it("handBootstrapFiles returns SOUL + INSTRUCTIONS only", () => {

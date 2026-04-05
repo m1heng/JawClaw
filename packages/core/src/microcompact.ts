@@ -6,43 +6,61 @@ export type MicrocompactOptions = {
   maxCharsPerResult?: number; // default 1500 - skip truncation if under this
   headChars?: number; // default 1000
   tailChars?: number; // default 500
+  watermark?: number; // previous watermark — ensures monotonic advancement
+};
+
+export type MicrocompactResult = {
+  messages: ChatMessage[];
+  watermark: number;
 };
 
 /**
  * Truncate old tool results in-memory. Does NOT mutate input.
- * Keeps the most recent N tool-call groups intact.
- * Older tool-result messages get head+tail truncated.
+ *
+ * Uses a monotonically-advancing watermark: tool groups before the watermark
+ * are permanently truncated, and the watermark only moves forward.
+ * This ensures previously-sent messages are never modified between LLM turns,
+ * preserving prefix cache (KV cache).
  */
 export function microcompactToolResults(
   messages: ChatMessage[],
   opts?: MicrocompactOptions,
-): ChatMessage[] {
+): MicrocompactResult {
   const keepRecent = opts?.keepRecentGroups ?? 3;
   const maxChars = opts?.maxCharsPerResult ?? 1500;
   const head = opts?.headChars ?? 1000;
   const tail = opts?.tailChars ?? 500;
+  const prevWatermark = opts?.watermark ?? 0;
 
   const units = groupIntoUnits(messages);
 
-  // Count tool-call groups from the end
-  let toolGroupCount = 0;
   const isToolGroup = (unit: ChatMessage[]) =>
     unit.length > 1 && unit[0].role === "assistant" && unit[0].meta?.tool_calls;
 
-  // Mark which groups to truncate
-  const truncateFlags: boolean[] = new Array(units.length).fill(false);
+  // Count total tool-call groups
+  let totalToolGroups = 0;
+  for (const unit of units) {
+    if (isToolGroup(unit)) totalToolGroups++;
+  }
 
-  for (let i = units.length - 1; i >= 0; i--) {
+  // Watermark only advances, never decreases
+  const newWatermark = Math.max(prevWatermark, Math.max(0, totalToolGroups - keepRecent));
+
+  // Mark groups before the watermark for truncation
+  const truncateFlags: boolean[] = new Array(units.length).fill(false);
+  let toolGroupIdx = 0;
+
+  for (let i = 0; i < units.length; i++) {
     if (isToolGroup(units[i])) {
-      toolGroupCount++;
-      if (toolGroupCount > keepRecent) {
+      if (toolGroupIdx < newWatermark) {
         truncateFlags[i] = true;
       }
+      toolGroupIdx++;
     }
   }
 
   // Apply truncation
-  return units.flatMap((unit, idx) => {
+  const result = units.flatMap((unit, idx) => {
     if (!truncateFlags[idx]) return unit;
     return unit.map((msg) => {
       if (msg.role !== "tool") return msg;
@@ -55,4 +73,6 @@ export function microcompactToolResults(
       return { ...msg, content: truncated };
     });
   });
+
+  return { messages: result, watermark: newWatermark };
 }

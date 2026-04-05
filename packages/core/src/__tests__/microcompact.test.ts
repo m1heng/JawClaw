@@ -39,8 +39,8 @@ function makeToolGroup(
 describe("microcompactToolResults", () => {
   it("returns messages unchanged when there are no tool-call groups", () => {
     const msgs = [makeMsg("hello"), makeMsg("world", "assistant")];
-    const result = microcompactToolResults(msgs);
-    expect(result).toEqual(msgs);
+    const { messages } = microcompactToolResults(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("returns messages unchanged when tool-call groups <= keepRecentGroups", () => {
@@ -53,8 +53,8 @@ describe("microcompactToolResults", () => {
       makeMsg("q3"),
       ...makeToolGroup(bigContent),
     ];
-    const result = microcompactToolResults(msgs, { keepRecentGroups: 3 });
-    expect(result).toEqual(msgs);
+    const { messages } = microcompactToolResults(msgs, { keepRecentGroups: 3 });
+    expect(messages).toEqual(msgs);
   });
 
   it("truncates older tool results when groups > keepRecentGroups", () => {
@@ -69,7 +69,7 @@ describe("microcompactToolResults", () => {
       makeMsg("q4"),
       ...makeToolGroup(bigContent),
     ];
-    const result = microcompactToolResults(msgs, {
+    const { messages } = microcompactToolResults(msgs, {
       keepRecentGroups: 2,
       maxCharsPerResult: 1500,
       headChars: 100,
@@ -78,7 +78,7 @@ describe("microcompactToolResults", () => {
 
     // The last 2 tool groups should be intact
     // Find all tool messages
-    const toolMsgs = result.filter((m) => m.role === "tool");
+    const toolMsgs = messages.filter((m) => m.role === "tool");
     // Last 2 tool results should be original length
     expect(toolMsgs[toolMsgs.length - 1].content).toBe(bigContent);
     expect(toolMsgs[toolMsgs.length - 2].content).toBe(bigContent);
@@ -100,12 +100,12 @@ describe("microcompactToolResults", () => {
       makeMsg("q3"),
       ...makeToolGroup(bigContent),
     ];
-    const result = microcompactToolResults(msgs, {
+    const { messages } = microcompactToolResults(msgs, {
       keepRecentGroups: 1,
       maxCharsPerResult: 1500,
     });
 
-    const toolMsgs = result.filter((m) => m.role === "tool");
+    const toolMsgs = messages.filter((m) => m.role === "tool");
     // The first tool result is small, should not be truncated
     expect(toolMsgs[0].content).toBe(smallContent);
     // The second is big and old, should be truncated
@@ -122,15 +122,15 @@ describe("microcompactToolResults", () => {
       makeMsg("q2"),
       ...makeToolGroup(bigContent),
     ];
-    const result = microcompactToolResults(msgs, { keepRecentGroups: 1 });
+    const { messages } = microcompactToolResults(msgs, { keepRecentGroups: 1 });
 
     // User messages should be untouched
-    const userMsgs = result.filter((m) => m.role === "user");
+    const userMsgs = messages.filter((m) => m.role === "user");
     expect(userMsgs[0].content).toBe("q1");
     expect(userMsgs[1].content).toBe("q2");
 
     // Assistant messages in the old tool group should be untouched
-    const assistantMsgs = result.filter(
+    const assistantMsgs = messages.filter(
       (m) => m.role === "assistant" && m.meta?.tool_calls,
     );
     expect(assistantMsgs[0].content).toBe("");
@@ -162,14 +162,81 @@ describe("microcompactToolResults", () => {
       ...makeToolGroup(bigContent),
       ...makeToolGroup(bigContent),
     ];
-    const result = microcompactToolResults(msgs);
+    const { messages } = microcompactToolResults(msgs);
 
-    const toolMsgs = result.filter((m) => m.role === "tool");
+    const toolMsgs = messages.filter((m) => m.role === "tool");
     // First tool result (oldest group) should be truncated
     expect(toolMsgs[0].content).toContain("[...");
     // Last 3 should be intact
     expect(toolMsgs[1].content).toBe(bigContent);
     expect(toolMsgs[2].content).toBe(bigContent);
     expect(toolMsgs[3].content).toBe(bigContent);
+  });
+
+  // ── Watermark tests ─────────────────────────────────────────
+
+  it("returns watermark advancing monotonically", () => {
+    const bigContent = "x".repeat(5000);
+    const msgs5: ChatMessage[] = [
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+    ];
+    // 5 groups, keep 3 → watermark = 2
+    const r1 = microcompactToolResults(msgs5, { keepRecentGroups: 3 });
+    expect(r1.watermark).toBe(2);
+
+    // Add a 6th group → watermark = 3
+    const msgs6 = [...msgs5, ...makeToolGroup(bigContent)];
+    const r2 = microcompactToolResults(msgs6, { keepRecentGroups: 3, watermark: r1.watermark });
+    expect(r2.watermark).toBe(3);
+    expect(r2.watermark).toBeGreaterThanOrEqual(r1.watermark);
+  });
+
+  it("watermark prevents re-expansion of previously truncated groups", () => {
+    const bigContent = "x".repeat(5000);
+    // 4 groups, keep 3 → watermark = 1 (group 0 truncated)
+    const msgs = [
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+    ];
+    const r1 = microcompactToolResults(msgs, { keepRecentGroups: 3 });
+    expect(r1.watermark).toBe(1);
+
+    // Same 4 groups again with the watermark — group 0 must stay truncated
+    const r2 = microcompactToolResults(msgs, { keepRecentGroups: 3, watermark: r1.watermark });
+    expect(r2.watermark).toBe(1);
+    const toolMsgs = r2.messages.filter((m) => m.role === "tool");
+    expect(toolMsgs[0].content).toContain("[...");
+  });
+
+  it("backward-compatible when watermark is omitted", () => {
+    const bigContent = "x".repeat(5000);
+    const msgs: ChatMessage[] = [
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+    ];
+    // Without watermark: same behavior as before (watermark defaults to 0)
+    const { messages, watermark } = microcompactToolResults(msgs, { keepRecentGroups: 3 });
+    expect(watermark).toBe(1);
+    const toolMsgs = messages.filter((m) => m.role === "tool");
+    expect(toolMsgs[0].content).toContain("[...");
+    expect(toolMsgs[1].content).toBe(bigContent);
+  });
+
+  it("watermark of 0 when all groups fit", () => {
+    const bigContent = "x".repeat(5000);
+    const msgs: ChatMessage[] = [
+      ...makeToolGroup(bigContent),
+      ...makeToolGroup(bigContent),
+    ];
+    const { watermark } = microcompactToolResults(msgs, { keepRecentGroups: 3 });
+    expect(watermark).toBe(0);
   });
 });

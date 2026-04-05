@@ -41,9 +41,15 @@ export type AgentConfig = {
   baseUrl?: string;
   apiKey: string;
   systemPrompt: string;
+  dynamicSystemPrompt?: string;
   tools: ToolDefinition[];
   maxTurns?: number;
   maxContextTokens?: number;
+};
+
+export type CompressionState = {
+  /** Monotonically-advancing watermark: tool groups before this index are permanently truncated. */
+  microcompactWatermark: number;
 };
 
 // --- Service interfaces for pluggable capabilities ---

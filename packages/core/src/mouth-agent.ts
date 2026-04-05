@@ -5,12 +5,13 @@ import { MessageQueue } from "./message-queue.js";
 import { HandAgent } from "./hand-agent.js";
 import { createReadTools } from "./read-tools.js";
 import { runReactLoop } from "./react-loop.js";
-import { buildSystemPrompt, mouthBootstrapFiles } from "./context.js";
+import { buildSystemPrompt, mouthStableBootstrapFiles, mouthDynamicBootstrapFiles } from "./context.js";
 import { MOUTH_TOOLS } from "./tools.js";
 import { extractSessionMemory } from "./session-memory.js";
 import { recallMemories } from "./memory-recall.js";
 import type {
   AgentConfig,
+  CompressionState,
   TaskDispatch,
   TaskResult,
   HandServices,
@@ -102,6 +103,7 @@ export class MouthAgent {
   private extractingMemory = false;
   private consolidating = false;
   private lastConsolidationTs = 0;
+  private compressionState: CompressionState = { microcompactWatermark: 0 };
 
   constructor(params: {
     sessionsDir: string;
@@ -220,8 +222,9 @@ export class MouthAgent {
       await this.shell.writeFile(archivePath, content);
     } catch { /* no existing session to archive */ }
     await this.shell.writeFile(this.session.filePath, "");
-    // Reset all checkpoints and session memory (in-memory + persisted)
+    // Reset all checkpoints, session memory, and compression state
     this.lastSessionMemoryCheckpoint = 0;
+    this.compressionState = { microcompactWatermark: 0 };
     const memRoot = this.handServices.memoryRoot ?? ".jawclaw/memory";
     await this.shell.writeFile(join(memRoot, ".session-memory-checkpoint"), "0").catch(() => {});
     await this.shell.writeFile(join(memRoot, "session-memory.md"), "").catch(() => {});
@@ -269,16 +272,29 @@ export class MouthAgent {
       model: this.config.model,
     });
 
-    // Inject bootstrap files (SOUL.md, INSTRUCTIONS.md, MEMORY.md, session-memory.md)
-    const basePrompt = recalled
-      ? MOUTH_SYSTEM_PROMPT + "\n\n" + recalled
-      : MOUTH_SYSTEM_PROMPT;
-    const systemPrompt = await buildSystemPrompt(
-      basePrompt,
-      mouthBootstrapFiles(memRoot),
+    // Build stable system prompt (SOUL.md, INSTRUCTIONS.md — rarely changes, cacheable)
+    const stablePrompt = await buildSystemPrompt(
+      MOUTH_SYSTEM_PROMPT,
+      mouthStableBootstrapFiles(memRoot),
       this.shell,
     );
-    const configWithMemory = { ...this.config, systemPrompt };
+
+    // Build dynamic system prompt (MEMORY.md, session-memory.md + recalled memories)
+    const dynamicParts: string[] = [];
+    const dynamicBootstrap = await buildSystemPrompt(
+      "",
+      mouthDynamicBootstrapFiles(memRoot),
+      this.shell,
+    );
+    if (dynamicBootstrap.trim()) dynamicParts.push(dynamicBootstrap);
+    if (recalled) dynamicParts.push(recalled);
+    const dynamicPrompt = dynamicParts.join("\n\n") || undefined;
+
+    const configWithMemory = {
+      ...this.config,
+      systemPrompt: stablePrompt,
+      dynamicSystemPrompt: dynamicPrompt,
+    };
 
     const tools: ToolRegistry = {
       // READ group (shared with Hand via SSOT)
@@ -370,6 +386,7 @@ export class MouthAgent {
       sessionMemoryPath,
       shell: this.shell,
       onUsage: (usage) => this.logUsage(usage, "mouth"),
+      compressionState: this.compressionState,
       // Assistant text is internal reasoning — not sent to any channel
     });
   }

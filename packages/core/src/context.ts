@@ -152,11 +152,20 @@ function isFailedResult(content: string): boolean {
 /**
  * Fold runs of ≥3 consecutive failed tool-call groups into a single
  * summary message. Does NOT mutate input.
+ *
+ * When `boundaryIndex` is set, only groups whose first message index
+ * is before the boundary are eligible for collapse. Groups at or after
+ * the boundary (the "recent zone") are preserved intact for cache safety.
  */
-export function collapseFailedGroups(messages: ChatMessage[]): ChatMessage[] {
+export function collapseFailedGroups(
+  messages: ChatMessage[],
+  opts?: { boundaryIndex?: number },
+): ChatMessage[] {
   const units = groupIntoUnits(messages);
+  const boundary = opts?.boundaryIndex;
   const result: ChatMessage[][] = [];
   let failedRun: ChatMessage[][] = [];
+  let messageOffset = 0;
 
   const isFailedGroup = (unit: ChatMessage[]): boolean => {
     if (unit.length < 2 || unit[0].role !== "assistant" || !unit[0].meta?.tool_calls) {
@@ -185,16 +194,60 @@ export function collapseFailedGroups(messages: ChatMessage[]): ChatMessage[] {
   };
 
   for (const unit of units) {
+    // Past the boundary — flush any pending failures and pass through uncollapsed
+    if (boundary !== undefined && messageOffset >= boundary) {
+      flushFailed();
+      result.push(unit);
+      messageOffset += unit.length;
+      continue;
+    }
+
     if (isFailedGroup(unit)) {
       failedRun.push(unit);
     } else {
       flushFailed();
       result.push(unit);
     }
+    messageOffset += unit.length;
   }
   flushFailed();
 
   return result.flat();
+}
+
+/** Count the number of tool-call groups in a message array. */
+export function countToolGroups(messages: ChatMessage[]): number {
+  const units = groupIntoUnits(messages);
+  return units.filter(
+    (u) => u.length > 1 && u[0].role === "assistant" && u[0].meta?.tool_calls,
+  ).length;
+}
+
+/**
+ * Map a microcompact watermark (tool-group count) to a message index.
+ * Returns the index of the first message AFTER the watermark-th tool group,
+ * i.e. the start of the "recent zone" that should be preserved for cache safety.
+ */
+export function watermarkToMessageIndex(
+  messages: ChatMessage[],
+  watermark: number,
+): number {
+  if (watermark <= 0) return 0;
+  const units = groupIntoUnits(messages);
+  let toolGroupsSeen = 0;
+  let messageOffset = 0;
+  for (const unit of units) {
+    const isToolGroup =
+      unit.length > 1 && unit[0].role === "assistant" && unit[0].meta?.tool_calls;
+    if (isToolGroup) {
+      toolGroupsSeen++;
+      if (toolGroupsSeen === watermark) {
+        return messageOffset + unit.length;
+      }
+    }
+    messageOffset += unit.length;
+  }
+  return messageOffset;
 }
 
 // ── Bootstrap file injection ─────────────────────────────────────
@@ -257,15 +310,26 @@ export async function buildSystemPrompt(
   return basePrompt + "\n\n---\n\n" + sections.join("\n\n");
 }
 
-/** Standard bootstrap files for Mouth (identity + memory). */
-export function mouthBootstrapFiles(memoryRoot: string): BootstrapFile[] {
+/** Stable bootstrap files for Mouth (identity — rarely changes, cacheable). */
+export function mouthStableBootstrapFiles(memoryRoot: string): BootstrapFile[] {
   const wsRoot = join(memoryRoot, "..");
   return [
     { label: "SOUL.md", path: join(wsRoot, "SOUL.md") },
     { label: "INSTRUCTIONS.md", path: join(wsRoot, "INSTRUCTIONS.md") },
+  ];
+}
+
+/** Dynamic bootstrap files for Mouth (memory — changes frequently). */
+export function mouthDynamicBootstrapFiles(memoryRoot: string): BootstrapFile[] {
+  return [
     { label: "MEMORY.md", path: join(memoryRoot, "MEMORY.md") },
     { label: "Session Memory", path: join(memoryRoot, "session-memory.md") },
   ];
+}
+
+/** @deprecated Use mouthStableBootstrapFiles + mouthDynamicBootstrapFiles. */
+export function mouthBootstrapFiles(memoryRoot: string): BootstrapFile[] {
+  return [...mouthStableBootstrapFiles(memoryRoot), ...mouthDynamicBootstrapFiles(memoryRoot)];
 }
 
 /** Standard bootstrap files for Hand (identity only, no memory). */
