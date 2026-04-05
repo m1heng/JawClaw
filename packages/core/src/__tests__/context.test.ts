@@ -5,8 +5,11 @@ import {
   compactHistory,
   snipOldMessages,
   collapseFailedGroups,
+  watermarkToMessageIndex,
   buildSystemPrompt,
   mouthBootstrapFiles,
+  mouthStableBootstrapFiles,
+  mouthDynamicBootstrapFiles,
   handBootstrapFiles,
 } from "../context.js";
 import { MockShell } from "./fixtures/mock-shell.js";
@@ -174,8 +177,8 @@ describe("collapseFailedGroups", () => {
       { ts: "1", role: "user", content: "hello" },
       ...toolGroup("read_file", "file contents", "2"),
     ];
-    const result = collapseFailedGroups(msgs);
-    expect(result).toEqual(msgs);
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("does not collapse fewer than 3 consecutive failed groups", () => {
@@ -183,8 +186,8 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("grep", "(no matches)", "1"),
       ...toolGroup("grep", "(no matches)", "2"),
     ];
-    const result = collapseFailedGroups(msgs);
-    expect(result).toEqual(msgs);
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("collapses 3+ consecutive failed groups", () => {
@@ -193,13 +196,13 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("grep", "Error: something", "2"),
       ...toolGroup("glob", "(no files found)", "3"),
     ];
-    const result = collapseFailedGroups(msgs);
+    const { messages } = collapseFailedGroups(msgs);
     // Should be collapsed into 1 message
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe("user");
-    expect(result[0].content).toContain("3 tool-call groups collapsed");
-    expect(result[0].content).toContain("grep");
-    expect(result[0].content).toContain("glob");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("user");
+    expect(messages[0].content).toContain("3 tool-call groups collapsed");
+    expect(messages[0].content).toContain("grep");
+    expect(messages[0].content).toContain("glob");
   });
 
   it("preserves success groups around collapsed failures", () => {
@@ -211,15 +214,15 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("grep", "(no matches)", "4"),
       ...toolGroup("read_file", "more success", "5"),
     ];
-    const result = collapseFailedGroups(msgs);
+    const { messages } = collapseFailedGroups(msgs);
     // user + success group(2) + collapsed(1) + success group(2) = 6
-    expect(result).toHaveLength(6);
-    expect(result[0].content).toBe("start");
-    expect(result[1].content).toBe("");  // assistant with tool_calls
-    expect(result[2].content).toBe("success content");
-    expect(result[3].content).toContain("3 tool-call groups collapsed");
-    expect(result[4].content).toBe(""); // assistant
-    expect(result[5].content).toBe("more success");
+    expect(messages).toHaveLength(6);
+    expect(messages[0].content).toBe("start");
+    expect(messages[1].content).toBe("");  // assistant with tool_calls
+    expect(messages[2].content).toBe("success content");
+    expect(messages[3].content).toContain("3 tool-call groups collapsed");
+    expect(messages[4].content).toBe(""); // assistant
+    expect(messages[5].content).toBe("more success");
   });
 
   it("does not collapse empty-result groups (silent success)", () => {
@@ -228,9 +231,9 @@ describe("collapseFailedGroups", () => {
       ...toolGroup("run_command", "", "2"),
       ...toolGroup("run_command", "", "3"),
     ];
-    const result = collapseFailedGroups(msgs);
+    const { messages } = collapseFailedGroups(msgs);
     // Empty results are silent successes (mkdir, touch, git add), NOT failures
-    expect(result).toEqual(msgs);
+    expect(messages).toEqual(msgs);
   });
 
   it("detects all failure patterns", () => {
@@ -241,9 +244,9 @@ describe("collapseFailedGroups", () => {
         ...toolGroup("test", pattern, "2"),
         ...toolGroup("test", pattern, "3"),
       ];
-      const result = collapseFailedGroups(msgs);
-      expect(result).toHaveLength(1);
-      expect(result[0].content).toContain("collapsed");
+      const { messages } = collapseFailedGroups(msgs);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].content).toContain("collapsed");
     }
   });
 
@@ -253,8 +256,8 @@ describe("collapseFailedGroups", () => {
       { ts: "2", role: "user", content: "" },
       { ts: "3", role: "user", content: "" },
     ];
-    const result = collapseFailedGroups(msgs);
-    expect(result).toEqual(msgs);
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toEqual(msgs);
   });
 });
 
@@ -315,14 +318,161 @@ describe("buildSystemPrompt", () => {
   });
 });
 
+describe("collapseFailedGroups with boundaryIndex", () => {
+  it("does not collapse failed groups past the boundary", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+      ...toolGroup("grep", "(no matches)", "4"),
+    ];
+    // Boundary at message index 4 (after group 1)
+    const { messages } = collapseFailedGroups(msgs, { boundaryIndex: 4 });
+    // Groups before boundary: only 2 failures → not collapsed
+    // Groups after boundary: untouched
+    expect(messages).toEqual(msgs);
+  });
+
+  it("collapses only within the truncated zone", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+      // boundary here (message index 6)
+      ...toolGroup("grep", "(no matches)", "4"),
+      ...toolGroup("grep", "(no matches)", "5"),
+      ...toolGroup("grep", "(no matches)", "6"),
+    ];
+    const { messages } = collapseFailedGroups(msgs, { boundaryIndex: 6 });
+    // Before boundary: 3 failed groups → collapsed into 1
+    // After boundary: 3 failed groups → NOT collapsed (past boundary)
+    expect(messages.length).toBe(1 + 6);
+    expect(messages[0].content).toContain("3 tool-call groups collapsed");
+    expect(messages[1].role).toBe("assistant");
+  });
+
+  it("boundary at 0 prevents all collapsing", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const { messages } = collapseFailedGroups(msgs, { boundaryIndex: 0 });
+    expect(messages).toEqual(msgs);
+  });
+
+  it("undefined boundary behaves like original (collapse everything)", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const { messages } = collapseFailedGroups(msgs);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain("collapsed");
+  });
+
+  it("processedCount freezes already-collapsed messages", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      // On first call, only 2 failed groups — not collapsed
+    ];
+    const r1 = collapseFailedGroups(msgs);
+    expect(r1.messages).toEqual(msgs);
+    expect(r1.processedCount).toBe(msgs.length); // 4 input messages processed
+
+    // A 3rd failed group arrives — but previous messages are frozen
+    const msgs2: ChatMessage[] = [
+      ...msgs,
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const r2 = collapseFailedGroups(msgs2, { processedCount: r1.processedCount });
+    // First 4 messages (groups 1-2) frozen, only group 3 is new (1 failure, not collapsed)
+    expect(r2.messages).toEqual(msgs2);
+  });
+
+  it("processedCount tracks input length even after collapse", () => {
+    // 3 failed groups → collapsed on first call
+    const msgs: ChatMessage[] = [
+      ...toolGroup("grep", "(no matches)", "1"),
+      ...toolGroup("grep", "(no matches)", "2"),
+      ...toolGroup("grep", "(no matches)", "3"),
+    ];
+    const r1 = collapseFailedGroups(msgs);
+    expect(r1.messages).toHaveLength(1); // collapsed summary
+    // processedCount must be 6 (input messages), NOT 1 (output length)
+    expect(r1.processedCount).toBe(6);
+
+    // Next turn: same input + 1 new success group
+    const msgs2: ChatMessage[] = [
+      ...msgs,
+      ...toolGroup("read_file", "success", "4"),
+    ];
+    const r2 = collapseFailedGroups(msgs2, { processedCount: r1.processedCount });
+    // The first 6 input messages are frozen (passed through as-is from previous output).
+    // The frozen slice is messages[0..5] which are the same 3 failed groups,
+    // but since processedCount=6 > messages.length trick: frozen = msgs2.slice(0,6) = all 3 groups verbatim.
+    // The new group is processed fresh and kept intact.
+    // Result: 3 original groups (6 msgs) + 1 success group (2 msgs) = 8
+    expect(r2.messages).toHaveLength(8);
+    expect(r2.messages[r2.messages.length - 1].content).toBe("success");
+  });
+});
+
+describe("watermarkToMessageIndex", () => {
+  it("returns 0 when watermark is 0", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("read_file", "content", "1"),
+      { ts: "2", role: "user", content: "hello" },
+    ];
+    expect(watermarkToMessageIndex(msgs, 0)).toBe(0);
+  });
+
+  it("maps watermark to correct message index", () => {
+    const msgs: ChatMessage[] = [
+      { ts: "0", role: "user", content: "q1" },     // idx 0
+      ...toolGroup("read_file", "content", "1"),      // idx 1-2 (group 0)
+      { ts: "3", role: "user", content: "q2" },      // idx 3
+      ...toolGroup("grep", "matches", "4"),           // idx 4-5 (group 1)
+      ...toolGroup("glob", "files", "6"),             // idx 6-7 (group 2)
+    ];
+    // watermark=1 → after group 0 → message index 3
+    expect(watermarkToMessageIndex(msgs, 1)).toBe(3);
+    // watermark=2 → after group 1 → message index 6
+    expect(watermarkToMessageIndex(msgs, 2)).toBe(6);
+    // watermark=3 → after group 2 → message index 8
+    expect(watermarkToMessageIndex(msgs, 3)).toBe(8);
+  });
+
+  it("returns total message count when watermark exceeds groups", () => {
+    const msgs: ChatMessage[] = [
+      ...toolGroup("read_file", "content", "1"),
+    ];
+    expect(watermarkToMessageIndex(msgs, 5)).toBe(2);
+  });
+});
+
 describe("bootstrapFiles", () => {
-  it("mouthBootstrapFiles returns SOUL + INSTRUCTIONS + MEMORY", () => {
+  it("mouthBootstrapFiles returns SOUL + INSTRUCTIONS + MEMORY (deprecated compat)", () => {
     const files = mouthBootstrapFiles("/ws/memory");
     const labels = files.map((f) => f.label);
     expect(labels).toContain("SOUL.md");
     expect(labels).toContain("INSTRUCTIONS.md");
     expect(labels).toContain("MEMORY.md");
-    expect(labels).not.toContain("USER.md");
+    expect(labels).toContain("Session Memory");
+  });
+
+  it("mouthStableBootstrapFiles returns SOUL + INSTRUCTIONS only", () => {
+    const files = mouthStableBootstrapFiles("/ws/memory");
+    const labels = files.map((f) => f.label);
+    expect(labels).toEqual(["SOUL.md", "INSTRUCTIONS.md"]);
+  });
+
+  it("mouthDynamicBootstrapFiles returns MEMORY + Session Memory only", () => {
+    const files = mouthDynamicBootstrapFiles("/ws/memory");
+    const labels = files.map((f) => f.label);
+    expect(labels).toEqual(["MEMORY.md", "Session Memory"]);
   });
 
   it("handBootstrapFiles returns SOUL + INSTRUCTIONS only", () => {

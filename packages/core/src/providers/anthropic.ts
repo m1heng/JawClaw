@@ -7,16 +7,35 @@ export function createAnthropicClient(apiKey: string, baseUrl?: string): LLMClie
 
   return {
     async createCompletion({ model, messages, tools }) {
-      const systemMsg = messages.find((m) => m.role === "system");
+      // Collect all system messages (stable first, then dynamic)
+      const systemMessages = messages.filter((m) => m.role === "system");
       const conversationMsgs = messages.filter((m) => m.role !== "system");
 
-      const anthropicTools = tools?.map(toAnthropicTool);
+      // Build system blocks with cache_control on the first (stable) block
+      const systemBlocks: Anthropic.Messages.TextBlockParam[] = systemMessages.map(
+        (msg, idx) => ({
+          type: "text" as const,
+          text: msg.content,
+          // Mark the first block (stable system prompt) as cacheable
+          ...(idx === 0 ? { cache_control: { type: "ephemeral" as const } } : {}),
+        }),
+      );
+
+      // Build tools with cache_control on the last one (stable across turns)
+      const anthropicTools = tools?.map((t, idx) => {
+        const tool = toAnthropicTool(t);
+        if (tools && idx === tools.length - 1) {
+          return { ...tool, cache_control: { type: "ephemeral" as const } };
+        }
+        return tool;
+      });
+
       const anthropicMessages = toAnthropicMessages(conversationMsgs);
 
       const response = await client.messages.create({
         model,
         max_tokens: 4096,
-        system: systemMsg?.content,
+        system: systemBlocks.length > 0 ? systemBlocks : undefined,
         messages: anthropicMessages,
         tools: anthropicTools,
       });
@@ -39,7 +58,24 @@ export function createAnthropicClient(apiKey: string, baseUrl?: string): LLMClie
       const usage = response.usage
         ? { promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens }
         : undefined;
-      return { content, toolCalls, stopReason: response.stop_reason ?? undefined, usage };
+
+      // Extract cache metrics from response usage
+      const cacheMetrics = {
+        cacheReadTokens: "cache_read_input_tokens" in response.usage
+          ? (response.usage.cache_read_input_tokens as number)
+          : undefined,
+        cacheCreationTokens: "cache_creation_input_tokens" in response.usage
+          ? (response.usage.cache_creation_input_tokens as number)
+          : undefined,
+      };
+
+      return {
+        content,
+        toolCalls,
+        stopReason: response.stop_reason ?? undefined,
+        usage,
+        cacheMetrics,
+      };
     },
   };
 }

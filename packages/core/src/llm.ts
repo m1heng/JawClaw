@@ -10,6 +10,10 @@ export type LLMResponse = {
   toolCalls: ToolCall[];
   stopReason?: "end_turn" | "tool_use" | "max_tokens" | "content_filter" | string;
   usage?: LLMUsage;
+  cacheMetrics?: {
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+  };
 };
 
 export type LLMMessage =

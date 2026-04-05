@@ -1,4 +1,4 @@
-import type { LLMClient, LLMResponse } from "../../llm.js";
+import type { LLMClient, LLMMessage, LLMResponse } from "../../llm.js";
 
 type QueuedItem =
   | { type: "response"; response: LLMResponse }
@@ -44,9 +44,13 @@ export class MockLLM implements LLMClient {
     tools?: unknown[];
   }): Promise<LLMResponse> {
     this.calls.push({ model: params.model, messageCount: params.messages.length });
+    this.capturedMessages.push(params.messages as LLMMessage[]);
     const item = this.queue.shift();
     if (!item) throw new Error("MockLLM: no more responses queued");
     if (item.type === "error") throw item.error;
     return item.response;
   }
+
+  /** Full message arrays from each createCompletion call, for cache-stability assertions. */
+  capturedMessages: Array<import("../../llm.js").LLMMessage[]> = [];
 }

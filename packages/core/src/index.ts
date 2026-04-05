@@ -1,5 +1,6 @@
 export type {
   ChatMessage,
+  CompressionState,
   TaskDispatch,
   TaskResult,
   ToolDefinition,
@@ -50,13 +51,17 @@ export {
   groupIntoUnits,
   snipOldMessages,
   collapseFailedGroups,
+  countToolGroups,
+  watermarkToMessageIndex,
   buildSystemPrompt,
   mouthBootstrapFiles,
+  mouthStableBootstrapFiles,
+  mouthDynamicBootstrapFiles,
   handBootstrapFiles,
 } from "./context.js";
 export type { BootstrapFile } from "./context.js";
 export { microcompactToolResults } from "./microcompact.js";
-export type { MicrocompactOptions } from "./microcompact.js";
+export type { MicrocompactOptions, MicrocompactResult } from "./microcompact.js";
 export { extractSessionMemory, buildExtractionPrompt } from "./session-memory.js";
 export type { SessionMemoryConfig } from "./session-memory.js";
 export { recallMemories, buildMemoryIndex, selectRelevantMemories } from "./memory-recall.js";

@@ -41,9 +41,17 @@ export type AgentConfig = {
   baseUrl?: string;
   apiKey: string;
   systemPrompt: string;
+  dynamicSystemPrompt?: string;
   tools: ToolDefinition[];
   maxTurns?: number;
   maxContextTokens?: number;
+};
+
+export type CompressionState = {
+  /** Monotonically-advancing watermark: tool groups before this index are permanently truncated. */
+  microcompactWatermark: number;
+  /** Number of messages already processed by collapse — only new messages beyond this are eligible. */
+  collapseProcessedCount: number;
 };
 
 // --- Service interfaces for pluggable capabilities ---

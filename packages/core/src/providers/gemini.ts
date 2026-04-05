@@ -12,7 +12,9 @@ export function createGeminiClient(apiKey: string): LLMClient {
 
   return {
     async createCompletion({ model, messages, tools }) {
-      const systemMsg = messages.find((m) => m.role === "system");
+      // Merge all system messages into one instruction (Gemini takes a single string)
+      const systemMessages = messages.filter((m) => m.role === "system");
+      const systemInstruction = systemMessages.map((m) => m.content).join("\n\n") || undefined;
       const conversationMsgs = messages.filter((m) => m.role !== "system");
 
       const geminiTools = tools?.length
@@ -25,7 +27,7 @@ export function createGeminiClient(apiKey: string): LLMClient {
         model,
         contents,
         config: {
-          systemInstruction: systemMsg?.content,
+          systemInstruction,
           tools: geminiTools,
         },
       });
