@@ -8,10 +8,13 @@ describe("createHandTools", () => {
   let services: HandServices;
   let tools: ReturnType<typeof createHandTools>;
 
+  let fileMtimes: Map<string, number>;
+
   beforeEach(() => {
     shell = new MockShell();
     services = {};
-    tools = createHandTools(shell, services);
+    fileMtimes = new Map();
+    tools = createHandTools(shell, services, undefined, fileMtimes);
   });
 
   describe("write_file", () => {
@@ -62,6 +65,51 @@ describe("createHandTools", () => {
       });
       expect(result).toContain("Error");
     });
+
+    it("detects stale file (modified since last read)", async () => {
+      shell.files.set("/tmp/f.txt", "original");
+      shell.fileMtimes.set("/tmp/f.txt", 1000);
+      // Simulate read_file recording mtime
+      fileMtimes.set("/tmp/f.txt", 1000);
+      // External modification changes mtime
+      shell.fileMtimes.set("/tmp/f.txt", 2000);
+
+      const result = await tools.edit_file({
+        path: "/tmp/f.txt",
+        old_string: "original",
+        new_string: "updated",
+      });
+      expect(result).toContain("modified since last read");
+      // File should NOT have been changed
+      expect(shell.files.get("/tmp/f.txt")).toBe("original");
+    });
+
+    it("allows edit when mtime matches", async () => {
+      shell.files.set("/tmp/f.txt", "original");
+      shell.fileMtimes.set("/tmp/f.txt", 1000);
+      fileMtimes.set("/tmp/f.txt", 1000);
+
+      const result = await tools.edit_file({
+        path: "/tmp/f.txt",
+        old_string: "original",
+        new_string: "updated",
+      });
+      expect(result).toContain("File edited");
+      expect(shell.files.get("/tmp/f.txt")).toBe("updated");
+    });
+
+    it("skips staleness check for files not previously read", async () => {
+      shell.files.set("/tmp/f.txt", "content");
+      shell.fileMtimes.set("/tmp/f.txt", 1000);
+      // No entry in fileMtimes — never read via read_file
+
+      const result = await tools.edit_file({
+        path: "/tmp/f.txt",
+        old_string: "content",
+        new_string: "new",
+      });
+      expect(result).toContain("File edited");
+    });
   });
 
   describe("run_command", () => {
@@ -94,7 +142,7 @@ describe("createHandTools", () => {
 
     it("delegates to service when configured", async () => {
       services.webSearch = async (q) => `Results for: ${q}`;
-      tools = createHandTools(shell, services);
+      tools = createHandTools(shell, services, undefined, fileMtimes);
       const result = await tools.web_search({ query: "test" });
       expect(result).toBe("Results for: test");
     });
@@ -109,7 +157,7 @@ describe("createHandTools", () => {
     it("sends message when configured", async () => {
       let sent = "";
       services.sendMessage = async (_id, text) => { sent = text; };
-      tools = createHandTools(shell, services);
+      tools = createHandTools(shell, services, undefined, fileMtimes);
       const result = await tools.message({ chat_id: "1", text: "hi" });
       expect(result).toContain("Message sent");
       expect(sent).toBe("hi");
@@ -126,7 +174,7 @@ describe("createHandTools", () => {
       services.cronList = () => [
         { id: "c1", description: "test", cronExpr: "*/5 * * * *", nextRun: "soon" },
       ];
-      tools = createHandTools(shell, services);
+      tools = createHandTools(shell, services, undefined, fileMtimes);
       const result = await tools.cron({ action: "list" });
       expect(result).toContain("c1");
       expect(result).toContain("test");
@@ -134,14 +182,14 @@ describe("createHandTools", () => {
 
     it("returns empty message when no entries", async () => {
       services.cronList = () => [];
-      tools = createHandTools(shell, services);
+      tools = createHandTools(shell, services, undefined, fileMtimes);
       const result = await tools.cron({ action: "list" });
       expect(result).toContain("no scheduled");
     });
 
     it("deletes entry", async () => {
       services.cronDelete = (id) => id === "c1";
-      tools = createHandTools(shell, services);
+      tools = createHandTools(shell, services, undefined, fileMtimes);
       expect(await tools.cron({ action: "delete", id: "c1" })).toContain("Deleted");
       expect(await tools.cron({ action: "delete", id: "c2" })).toContain("not found");
     });
@@ -149,7 +197,7 @@ describe("createHandTools", () => {
     it("schedules with replyTo", async () => {
       let scheduledChat = "";
       services.cronSchedule = (_d, _c, chatId) => { scheduledChat = chatId; return "id1"; };
-      tools = createHandTools(shell, services, "chat-123");
+      tools = createHandTools(shell, services, "chat-123", fileMtimes);
       const result = await tools.cron({
         action: "schedule",
         description: "remind",

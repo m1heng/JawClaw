@@ -6,6 +6,7 @@ import type { Shell, ExecResult } from "../../providers/shell.js";
  */
 export class MockShell implements Shell {
   files = new Map<string, string>();
+  fileMtimes = new Map<string, number>();
   execCalls: Array<{ command: string; opts?: { cwd?: string; timeout?: number } }> = [];
   execHandler?: (command: string) => ExecResult;
 
@@ -26,6 +27,7 @@ export class MockShell implements Shell {
 
   async writeFile(path: string, content: string): Promise<void> {
     this.files.set(path, content);
+    this.fileMtimes.set(path, Date.now());
   }
 
   async appendFile(path: string, content: string): Promise<void> {
@@ -35,6 +37,12 @@ export class MockShell implements Shell {
 
   async mkdir(_path: string): Promise<void> {
     // no-op in memory
+  }
+
+  async stat(path: string): Promise<{ mtimeMs: number; size: number }> {
+    const content = this.files.get(path);
+    if (content === undefined) throw new Error(`ENOENT: ${path}`);
+    return { mtimeMs: this.fileMtimes.get(path) ?? 0, size: content.length };
   }
 
   async listFiles(dir: string): Promise<string[]> {

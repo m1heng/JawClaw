@@ -40,10 +40,15 @@ export function createGeminiClient(apiKey: string): LLMClient {
       const stopReason = mapGeminiFinishReason(
         response.candidates?.[0]?.finishReason,
       );
+      const meta = response.usageMetadata;
+      const usage = meta
+        ? { promptTokens: meta.promptTokenCount ?? 0, completionTokens: meta.candidatesTokenCount ?? 0 }
+        : undefined;
       return {
         content: response.text ?? null,
         toolCalls,
         stopReason,
+        usage,
       };
     },
   };

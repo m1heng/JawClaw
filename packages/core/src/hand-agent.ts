@@ -8,7 +8,7 @@ import { runReactLoop } from "./react-loop.js";
 import { buildSystemPrompt, handBootstrapFiles } from "./context.js";
 import { HAND_TOOLS } from "./tools.js";
 import type { AgentConfig, TaskDispatch, TaskResult, HandServices } from "./types.js";
-import type { LLMClient } from "./llm.js";
+import type { LLMClient, LLMUsage } from "./llm.js";
 import type { ToolRegistry } from "./tool-executor.js";
 import type { Shell } from "./providers/shell.js";
 
@@ -29,6 +29,7 @@ export class HandAgent {
   private llm: LLMClient;
   private services: HandServices;
   private shell: Shell;
+  private onUsage?: (usage: LLMUsage) => void;
 
   constructor(params: {
     task: TaskDispatch;
@@ -37,6 +38,7 @@ export class HandAgent {
     llm: LLMClient;
     services?: HandServices;
     shell: Shell;
+    onUsage?: (usage: LLMUsage) => void;
   }) {
     this.id = generateId();
     this.task = params.task;
@@ -45,6 +47,7 @@ export class HandAgent {
     this.llm = params.llm;
     this.services = params.services ?? {};
     this.shell = params.shell;
+    this.onUsage = params.onUsage;
     this.session = new ChatSession(
       join(params.sessionsDir, `hand_${this.task.taskId}.jsonl`),
       params.shell,
@@ -79,9 +82,10 @@ export class HandAgent {
     );
     const config = { ...this.config, systemPrompt };
 
+    const fileMtimes = new Map<string, number>();
     const tools: ToolRegistry = {
-      ...createReadTools(this.shell, memRoot),
-      ...createHandTools(this.shell, this.services, this.task.replyTo),
+      ...createReadTools(this.shell, memRoot, fileMtimes),
+      ...createHandTools(this.shell, this.services, this.task.replyTo, fileMtimes),
     };
 
     try {
@@ -92,6 +96,7 @@ export class HandAgent {
         llm: this.llm,
         tools,
         abortSignal: this.abortController.signal,
+        onUsage: this.onUsage,
         onTurn: () => {
           this.currentTurn++;
         },

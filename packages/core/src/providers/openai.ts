@@ -42,10 +42,14 @@ export function createOpenAIClient(
         })) ?? [];
 
       const stopReason = mapFinishReason(choice.finish_reason);
+      const usage = response.usage
+        ? { promptTokens: response.usage.prompt_tokens, completionTokens: response.usage.completion_tokens }
+        : undefined;
       return {
         content: choice.message.content,
         toolCalls,
         stopReason,
+        usage,
       };
     },
   };

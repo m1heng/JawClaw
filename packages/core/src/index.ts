@@ -11,7 +11,7 @@ export type {
   HandServices,
   CronScheduleFn,
 } from "./types.js";
-export type { LLMClient, LLMResponse, LLMMessage } from "./llm.js";
+export type { LLMClient, LLMResponse, LLMMessage, LLMUsage } from "./llm.js";
 export type { ToolHandler, ToolRegistry } from "./tool-executor.js";
 export {
   applyResultBudget,
@@ -22,7 +22,7 @@ export {
 export type { QueueMessage } from "./message-queue.js";
 
 // Providers
-export type { Shell, ExecResult } from "./providers/shell.js";
+export type { Shell, ExecResult, FileStat } from "./providers/shell.js";
 export { LocalShell } from "./providers/local-shell.js";
 export { createOpenAIClient } from "./providers/openai.js";
 export { createGeminiClient } from "./providers/gemini.js";

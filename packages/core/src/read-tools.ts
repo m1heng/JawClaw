@@ -17,8 +17,15 @@ function formatExec(r: ExecResult): string {
 /**
  * Create READ group tool handlers.
  * Shared by both Mouth and Hand agents (SSOT).
+ *
+ * @param fileMtimes Optional shared map for tracking file modification times.
+ *   Used by edit_file to detect stale edits (file changed since last read).
  */
-export function createReadTools(shell: Shell, memoryRoot: string): ToolRegistry {
+export function createReadTools(
+  shell: Shell,
+  memoryRoot: string,
+  fileMtimes?: Map<string, number>,
+): ToolRegistry {
   return {
     read_file: async (args) => {
       const path = args.path as string;
@@ -26,6 +33,13 @@ export function createReadTools(shell: Shell, memoryRoot: string): ToolRegistry 
       const limit = args.limit as number | undefined;
       try {
         const content = await shell.readFile(path);
+        // Track mtime for staleness detection by edit_file
+        if (fileMtimes && shell.stat) {
+          try {
+            const s = await shell.stat(path);
+            fileMtimes.set(path, s.mtimeMs);
+          } catch { /* stat failure is non-fatal */ }
+        }
         if (offset !== undefined || limit !== undefined) {
           const lines = content.split("\n");
           const start = (offset ?? 1) - 1;
